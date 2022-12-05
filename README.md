@@ -5,9 +5,13 @@ development machine. This is obviously not what Firecracker was developed for, b
 oppurtunity to learn a little about it!
 
 At present, this project provides some basic automation for building a kernel image and rootfs that
-firecracker can boot. 
+firecracker can boot.
 
 I took a lot of influence from [ubuntu-firecracker](https://github.com/bkleiner/ubuntu-firecracker) by [@bkleiner](https://github.com/bkleiner) in the making of this project.
+
+Using this approach, I was able to deploy the [Canonical Observability Stack] with [Juju] on [MicroK8s] inside a Firecracker VM:
+
+![COS Lite on MicroK8s on Firecracker](.github/images/screenshot.png)
 
 ## Prerequisites
 
@@ -72,7 +76,7 @@ resize2fs vm/disk.ext4
 # This will be the name of the firecracker tap interface
 TAP_IFACE="fc-tap0"
 # Change this to the name of your default network interface:
-DEVICE_NAME="enp39s0" 
+DEVICE_NAME="enp39s0"
 
 sudo ip addr add 172.20.0.1/24 dev "$TAP_IFACE"
 sudo ip link set "$TAP_IFACE" up
@@ -140,6 +144,7 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 - [ ] Add support for customising kernel and rootfs build
 - [ ] Wrap firectl to run VMs in the background
 
-[Firecracker]: https://firecracker-microvm.github.io/
-[MicroK8s]: https://microk8s.io
-[Juju]: https://juju.is
+[firecracker]: https://firecracker-microvm.github.io/
+[microk8s]: https://microk8s.io
+[juju]: https://juju.is
+[canonical observability stack]: https://charmhub.io/topics/canonical-observability-stack
