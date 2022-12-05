@@ -7,7 +7,7 @@ oppurtunity to learn a little about it!
 At present, this project provides some basic automation for building a kernel image and rootfs that
 firecracker can boot.
 
-I took a lot of influence from [ubuntu-firecracker](https://github.com/bkleiner/ubuntu-firecracker) by [@bkleiner](https://github.com/bkleiner) in the making of this project.
+I took a lot of influence from [ubuntu-firecracker] by [@bkleiner] in the making of this project.
 
 Using this approach, I was able to deploy the [Canonical Observability Stack] with [Juju] on [MicroK8s] inside a Firecracker VM:
 
@@ -24,7 +24,7 @@ Before you can use or test this project, you'll need the following installed on 
 ## Limitations and Caveats
 
 This project is heavily tailored to my own use currently. In particular, the rootfs will contain my
-SSH key by default! You can change that in `./script/provision.sh`. In a future update, I'm aiming
+SSH key by default! You can change that in `./builder-image/script/provision.sh`. In a future update, I'm aiming
 to enable `cloud-init` support for the VMs and will remove this!
 
 ## Getting Started
@@ -61,7 +61,7 @@ mkdir -p vm
 cp build/dist/vmlinux build/dist/image.ext4 vm/
 ```
 
-2.(Optional) Resize the disk image so that there is some space on the rootfs for you to install
+2. (Optional) Resize the disk image so that there is some space on the rootfs for you to install
 packages, store files, etc.
 
 ```bash
@@ -148,3 +148,5 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 [microk8s]: https://microk8s.io
 [juju]: https://juju.is
 [canonical observability stack]: https://charmhub.io/topics/canonical-observability-stack
+[ubuntu-firecracker]: https://github.com/bkleiner/ubuntu-firecracker
+[@bkleiner]: https://github.com/bkleiner
