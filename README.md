@@ -62,7 +62,7 @@ cp build/dist/vmlinux build/dist/image.ext4 vm/
 ```
 
 2. (Optional) Resize the disk image so that there is some space on the rootfs for you to install
-packages, store files, etc.
+   packages, store files, etc.
 
 ```bash
 # Resize image to 20G
@@ -78,6 +78,7 @@ TAP_IFACE="fc-tap0"
 # Change this to the name of your default network interface:
 DEVICE_NAME="enp39s0"
 
+sudo ip tuntap add dev "$TAP_IFACE" mode tap user "$(whoami)"
 sudo ip addr add 172.20.0.1/24 dev "$TAP_IFACE"
 sudo ip link set "$TAP_IFACE" up
 sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"

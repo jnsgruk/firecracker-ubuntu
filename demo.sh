@@ -30,6 +30,7 @@ DEVICE_NAME="enp39s0"
 
 # Do some network interface setup if not already complete
 if ! ip l | grep -q "$TAP_IFACE"; then
+  sudo ip tuntap add dev "$TAP_IFACE" mode tap user "$(whoami)"
   sudo ip addr add 172.20.0.1/24 dev "$TAP_IFACE"
   sudo ip link set "$TAP_IFACE" up
   sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
