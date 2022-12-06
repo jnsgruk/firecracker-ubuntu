@@ -2,14 +2,15 @@
 
 The purpose of this project was to explore running Ubuntu with [Firecracker] as a general purpose
 development machine. This is obviously not what Firecracker was developed for, but it was an
-oppurtunity to learn a little about it!
+opportunity to learn a little about it!
 
 At present, this project provides some basic automation for building a kernel image and rootfs that
 firecracker can boot.
 
 I took a lot of influence from [ubuntu-firecracker] by [@bkleiner] in the making of this project.
 
-Using this approach, I was able to deploy the [Canonical Observability Stack] with [Juju] on [MicroK8s] inside a Firecracker VM:
+Using this approach, I was able to deploy the [Canonical Observability Stack] with [Juju] on
+[MicroK8s] inside a Firecracker VM:
 
 ![COS Lite on MicroK8s on Firecracker](.github/images/screenshot.png)
 
@@ -20,21 +21,45 @@ Before you can use or test this project, you'll need the following installed on 
 - [docker](https://docs.docker.com/desktop/install/linux-install/)
 - [firecracker](https://github.com/firecracker-microvm/firecracker)
 - [firectl](https://github.com/firecracker-microvm/firectl)
+- [dnsmasq](https://thekelleys.org.uk/dnsmasq/doc.html)
 
-## Limitations and Caveats
+Note that dnsmasq is only required if you want to run DHCP/DNS for your VMs rather than statically
+address them
+
+## Limitations and caveats
 
 This project is heavily tailored to my own use currently. In particular, the rootfs will contain my
-SSH key by default! You can change that in `./builder-image/script/provision.sh`. In a future update, I'm aiming
-to enable `cloud-init` support for the VMs and will remove this!
+SSH key by default! You can change that in `./builder-image/script/provision.sh`. In a future
+update, I'm aiming to enable `cloud-init` support for the VMs and will remove this!
 
-## Getting Started
+## Quick start
 
-You can get going with the project in easy mode by just running `./demo.sh`. If you'd like to know
-what's going on in the background, read on...
+You can start the project on a clean machine with `./demo.sh`. This will first build an OCI image,
+which is then in turn used to build and kernel and rootfs image. Once those images are built, the
+demo script will start a VM with some default config.
 
-### Building the project
+By default, the [config](./default.conf) looks like so:
 
 ```bash
+# Some configuration for the VM
+CPUS="${CPUS:-8}"
+MEMORY="${MEMORY:-16386}" # 16GB
+DISK="${DISK:-20G}"
+
+# Uncomment this line to use a bridge interface and enable DHCP for the VM
+# DHCP="${DHCP:-true}"
+```
+
+Once you've run `./demo.sh`, you'll be dropped into a serial console logged in as root. To exit or
+shutdown the VM, type `reboot`.
+
+## HACKING
+
+### Building components
+
+If you need to rebuild any of the individual components, you can use the included Makefile:
+
+```
 # Clone the repository
 git clone https://github.com/jnsgruk/firecracker-ubuntu
 cd firecracker-ubuntu
@@ -50,58 +75,7 @@ make kernel
 make rootfs
 ```
 
-### Start a VM
-
-1. Create a folder for your VM kernel and disk image and copy some artefacts from the build process
-   into it
-
-```bash
-mkdir -p vm
-# Dopy image and kernel
-cp build/dist/vmlinux build/dist/image.ext4 vm/
-```
-
-2. (Optional) Resize the disk image so that there is some space on the rootfs for you to install
-   packages, store files, etc.
-
-```bash
-# Resize image to 20G
-truncate -s 20G vm/disk.ext4
-resize2fs vm/disk.ext4
-```
-
-3. Create a `tap` interface for the VMs network interface:
-
-```bash
-# This will be the name of the firecracker tap interface
-TAP_IFACE="fc-tap0"
-# Change this to the name of your default network interface:
-DEVICE_NAME="enp39s0"
-
-sudo ip tuntap add dev "$TAP_IFACE" mode tap user "$(whoami)"
-sudo ip addr add 172.20.0.1/24 dev "$TAP_IFACE"
-sudo ip link set "$TAP_IFACE" up
-sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
-sudo iptables -t nat -A POSTROUTING -o "$DEVICE_NAME" -j MASQUERADE
-sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-sudo iptables -A FORWARD -i "$TAP_IFACE" -o "$DEVICE_NAME" -j ACCEPT
-```
-
-4. Start the VM. In this case we start with 8 cores and 16GB RAM:
-
-```bash
-firectl \
-    --ncpus "$CPUS" \
-    --memory "$MEMORY" \
-    --kernel="vm/vmlinux" \
-    --root-drive="vm/disk.ext4" \
-    --tap-device="$TAP_IFACE/$(cat /sys/class/net/$TAP_IFACE/address)" \
-    --kernel-opts="init=/bin/systemd noapic reboot=k panic=1 pc
-```
-
-5. Enjoy your new VM! Take a look around...
-
-## Kernel Configurations
+### Kernel configurations
 
 Included with this repo are two kernel config files:
 
@@ -140,7 +114,8 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 
 ## TODO
 
-- [ ] Figure out how to run DHCP on the tap interface
+- [x] Figure out how to run DHCP on a tap interface
+- [ ] Enable the use of standard Ubuntu cloud images
 - [ ] Enable cloud-init support
 - [ ] Add support for customising kernel and rootfs build
 - [ ] Wrap firectl to run VMs in the background
