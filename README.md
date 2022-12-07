@@ -18,10 +18,10 @@ Using this approach, I was able to deploy the [Canonical Observability Stack] wi
 
 Before you can use or test this project, you'll need the following installed on your machine:
 
-- [docker](https://docs.docker.com/desktop/install/linux-install/)
-- [firecracker](https://github.com/firecracker-microvm/firecracker)
-- [firectl](https://github.com/firecracker-microvm/firectl)
-- [dnsmasq](https://thekelleys.org.uk/dnsmasq/doc.html)
+- [docker]
+- [firecracker]
+- [firectl]
+- [dnsmasq]
 
 Note that dnsmasq is only required if you want to run DHCP/DNS for your VMs rather than statically
 address them
@@ -38,7 +38,7 @@ You can start the project on a clean machine with `./demo.sh`. This will first b
 which is then in turn used to build and kernel and rootfs image. Once those images are built, the
 demo script will start a VM with some default config.
 
-By default, the [config](./default.conf) looks like so:
+By default, the [config] looks like so:
 
 ```bash
 # Some configuration for the VM
@@ -80,8 +80,8 @@ make rootfs
 
 Included with this repo are two kernel config files:
 
-- [kernel-config-minimal](./config/kernel-config-minimal)
-- [kernel-config-jammy-modified](./config/kernel-config-jammy-modified)
+- [kernel-config-minimal]
+- [kernel-config-jammy-modified]
 
 The former is a very minimal config that has just the features I needed for testing out running
 LXD, [MicroK8s] and [Juju].
@@ -121,9 +121,15 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 - [ ] Add support for customising kernel and rootfs build
 - [ ] Wrap firectl to run VMs in the background
 
-[firecracker]: https://firecracker-microvm.github.io/
-[microk8s]: https://microk8s.io
-[juju]: https://juju.is
-[canonical observability stack]: https://charmhub.io/topics/canonical-observability-stack
-[ubuntu-firecracker]: https://github.com/bkleiner/ubuntu-firecracker
 [@bkleiner]: https://github.com/bkleiner
+[canonical observability stack]: https://charmhub.io/topics/canonical-observability-stack
+[config]: ./default.conf
+[dnsmasq]: https://thekelleys.org.uk/dnsmasq/doc.html
+[docker]: https://docs.docker.com/desktop/install/linux-install/
+[firecracker]: https://github.com/firecracker-microvm/firecracker
+[firectl]: https://github.com/firecracker-microvm/firectl
+[juju]: https://juju.is
+[kernel-config-minimal]: ./config/kernel-config-minimal
+[kernel-config-jammy-modified]: ./config/kernel-config-jammy-modified
+[microk8s]: https://microk8s.io
+[ubuntu-firecracker]: https://github.com/bkleiner/ubuntu-firecracker
