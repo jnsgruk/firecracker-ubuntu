@@ -42,12 +42,13 @@ By default, the [config](./default.conf) looks like so:
 
 ```bash
 # Some configuration for the VM
-CPUS="${CPUS:-8}"
-MEMORY="${MEMORY:-16386}" # 16GB
-DISK="${DISK:-20G}"
+FC_CPUS="${FC_CPUS:-8}"
+FC_MEMORY="${FC_MEMORY:-16386}" # 16GB
+FC_DISK="${FC_DISK:-20G}"
+FC_HOSTNAME="${FC_HOSTNAME:-dev}"
 
 # Uncomment this line to use a bridge interface and enable DHCP for the VM
-# DHCP="${DHCP:-true}"
+# FC_DHCP="${FC_DHCP:-true}"
 ```
 
 Once you've run `./demo.sh`, you'll be dropped into a serial console logged in as root. To exit or
