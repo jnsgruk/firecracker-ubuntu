@@ -1,2 +1,10 @@
 vm/
 build/
+
+dnsmasq.leases
+dnsmasq.hosts
+dnsmasq.conf
+dnsmasq.pid
+dnsmasq.log
+
+custom.conf
