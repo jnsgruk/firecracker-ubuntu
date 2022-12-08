@@ -116,7 +116,7 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 ## TODO
 
 - [x] Figure out how to run DHCP on a tap interface
-- [ ] Enable the use of standard Ubuntu cloud images
+- [x] Enable the use of standard Ubuntu cloud images
 - [ ] Enable cloud-init support
 - [ ] Add support for customising kernel and rootfs build
 - [ ] Wrap firectl to run VMs in the background

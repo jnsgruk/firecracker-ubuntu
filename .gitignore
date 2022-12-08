@@ -1,5 +1,6 @@
 vm/
 build/
+images/
 
 dnsmasq.leases
 dnsmasq.hosts
