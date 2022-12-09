@@ -1,5 +1,6 @@
 vm/
-build/
+custom-image/build/
+custom-image/vm
 images/
 
 dnsmasq.leases
@@ -9,3 +10,5 @@ dnsmasq.pid
 dnsmasq.log
 
 custom.conf
+userdata.yaml
+_userdata.yaml

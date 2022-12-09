@@ -4,10 +4,12 @@ The purpose of this project was to explore running Ubuntu with [Firecracker] as 
 development machine. This is obviously not what Firecracker was developed for, but it was an
 opportunity to learn a little about it!
 
-At present, this project provides some basic automation for building a kernel image and rootfs that
-firecracker can boot.
+At present, this project can download and start Ubuntu cloud images using firecracker, with support
+for supplying a cloud-init file to customise the virtual machine. It relies upon [dnsmasq] to
+dynamically address the VM it creates.
 
-I took a lot of influence from [ubuntu-firecracker] by [@bkleiner] in the making of this project.
+I took a lot of influence from [ubuntu-firecracker] by [@bkleiner], and this [blog] from
+[@ahachete] in the making of this project.
 
 Using this approach, I was able to deploy the [Canonical Observability Stack] with [Juju] on
 [MicroK8s] inside a Firecracker VM:
@@ -18,26 +20,25 @@ Using this approach, I was able to deploy the [Canonical Observability Stack] wi
 
 Before you can use or test this project, you'll need the following installed on your machine:
 
-- [docker]
-- [firecracker]
-- [firectl]
 - [dnsmasq]
-- [jo]
-
-Note that dnsmasq is only required if you want to run DHCP/DNS for your VMs rather than statically
-address them
-
-## Limitations and caveats
-
-This project is heavily tailored to my own use currently. In particular, the rootfs will contain my
-SSH key by default! You can change that in `./builder-image/script/provision.sh`. In a future
-update, I'm aiming to enable `cloud-init` support for the VMs and will remove this!
+- [firecracker]
+- [jq]
+- [yq]
 
 ## Quick start
 
-You can start the project on a clean machine with `./demo.sh`. This will first build an OCI image,
-which is then in turn used to build and kernel and rootfs image. Once those images are built, the
-demo script will start a VM with some default config.
+You can start the project on a clean machine with `./demo.sh`. You might want to adjust the
+[userdata.yaml] before starting it to ensure the right SSH key is present.
+
+This will do the following:
+
+- Download and process the relevant Ubuntu cloud image (according to `FC_SERIES`)
+- Create a network bridge device
+- Start `dnsmasq` on that bridge
+- Create two tap network interfaces for the VM (one for the metadata service, one for normal use)
+- Create a folder structure for a VM, containing kernel, disk, initrd and a definition file
+- Start firecracker and configure the VM over it's HTTP API
+- Start the VM
 
 By default, the [config] looks like so:
 
@@ -48,90 +49,41 @@ FC_MEMORY="${FC_MEMORY:-16386}" # 16GB
 FC_DISK="${FC_DISK:-20G}"
 FC_HOSTNAME="${FC_HOSTNAME:-dev}"
 
-# Uncomment this line to use a bridge interface and enable DHCP for the VM
-# FC_DHCP="${FC_DHCP:-true}"
+# Which series of Ubuntu to boot
+FC_SERIES="${FC_SERIES:-jammy}"
+
+# Name of the bridge interface
+FC_BRIDGE_IFACE="fcbr0"
 ```
 
-Once you've run `./demo.sh`, you'll be dropped into a serial console logged in as root. To exit or
-shutdown the VM, type `reboot`.
+Once you've run `./demo.sh`, you'll get instructions on how to connect to your VM.
 
-## HACKING
-
-### Building components
-
-If you need to rebuild any of the individual components, you can use the included Makefile:
-
-```
-# Clone the repository
-git clone https://github.com/jnsgruk/firecracker-ubuntu
-cd firecracker-ubuntu
-
-# (Optional) Build the builder container image
-# If you omit this step the image will be pulled from Docker Hub
-make oci
-
-# Build a kernel image
-make kernel
-
-# Build a rootfs
-make rootfs
-```
-
-### Kernel configurations
-
-Included with this repo are two kernel config files:
-
-- [kernel-config-minimal]
-- [kernel-config-jammy-modified]
-
-The former is a very minimal config that has just the features I needed for testing out running
-LXD, [MicroK8s] and [Juju].
-
-The latter was created by pulling the kernel config from the latest Ubuntu 22.04 cloud image and
-making some minor modifications so that it would boot in this setup, so is more representative of a
-"proper" Ubuntu kernel.
-
-There is a symlink at `./config/kernel-config` that points to the minimal version by default. To
-build the Ubuntu kernel, just remove the symlink and recreate it to point to the kernel config you
-wish to use.
-
-You can also use the OCI image to run `make menuconfig` to customise a config:
-
-```bash
-docker run \
-    --rm \
-    -v $(pwd)/build:/build \
-    -v $(pwd)/config:/config \
-    --entrypoint /bin/bash \
-    -it jnsgruk/firecracker-builder
-
-cd /build/kernel/linux-source-5.15.0/
-# Run menuconfig, make any changes you need to
-make menuconfig
-# Copy the updated config into location in the config directory
-cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
-
-# Now exit the container and run the kernel build to use the new config
-```
+To cleanup your machine, run `./cleanup.sh`. Note that this will delete all downloaded artefacts,
+kill started processes, remove any network interfaces and delete the VM.
 
 ## TODO
+
+- [ ] Output an accurate message with connection instructions on boot
+- [ ] Resume VM and make sure existing interfaces are present
+- [ ] Multiple VM support
+- [ ] Better command line arg experience
 
 - [x] Figure out how to run DHCP on a tap interface
 - [x] Enable the use of standard Ubuntu cloud images
 - [x] Enable cloud-init support
-- [ ] Add support for customising kernel and rootfs build
-- [ ] Wrap firectl to run VMs in the background
+- [x] Add support for customising kernel and rootfs build
 
+[@ahachete]: https://twitter.com/ahachete/
 [@bkleiner]: https://github.com/bkleiner
+[blog]: https://ongres.com/blog/automation-to-run-vms-based-on-vanilla-cloud-images-on-firecracker/
 [canonical observability stack]: https://charmhub.io/topics/canonical-observability-stack
 [config]: ./default.conf
 [dnsmasq]: https://thekelleys.org.uk/dnsmasq/doc.html
 [docker]: https://docs.docker.com/desktop/install/linux-install/
 [firecracker]: https://github.com/firecracker-microvm/firecracker
-[firectl]: https://github.com/firecracker-microvm/firectl
-[jo]: https://github.com/jpmens/jo
+[jq]: https://stedolan.github.io/jq/
 [juju]: https://juju.is
-[kernel-config-minimal]: ./config/kernel-config-minimal
-[kernel-config-jammy-modified]: ./config/kernel-config-jammy-modified
 [microk8s]: https://microk8s.io
 [ubuntu-firecracker]: https://github.com/bkleiner/ubuntu-firecracker
+[userdata.yaml]: ./userdata.yaml
+[yq]: https://mikefarah.gitbook.io/yq/

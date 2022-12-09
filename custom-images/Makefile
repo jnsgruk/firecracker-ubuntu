@@ -6,8 +6,8 @@ mkfile_dir := $(dir $(mkfile_path))
 oci:
 	docker build \
 		-t jnsgruk/firecracker-builder \
-		-f $(mkfile_dir)/builder-image/Dockerfile \
-		./builder-image
+		-f $(mkfile_dir)/Dockerfile \
+		.
 
 kernel:
 	mkdir -p $(mkfile_dir)/build
