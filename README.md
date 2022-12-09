@@ -22,6 +22,7 @@ Before you can use or test this project, you'll need the following installed on 
 - [firecracker]
 - [firectl]
 - [dnsmasq]
+- [jo]
 
 Note that dnsmasq is only required if you want to run DHCP/DNS for your VMs rather than statically
 address them
@@ -117,7 +118,7 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 
 - [x] Figure out how to run DHCP on a tap interface
 - [x] Enable the use of standard Ubuntu cloud images
-- [ ] Enable cloud-init support
+- [x] Enable cloud-init support
 - [ ] Add support for customising kernel and rootfs build
 - [ ] Wrap firectl to run VMs in the background
 
@@ -128,6 +129,7 @@ cp /build/kernel/linux-source-5.15.0/.config /config/kernel-config
 [docker]: https://docs.docker.com/desktop/install/linux-install/
 [firecracker]: https://github.com/firecracker-microvm/firecracker
 [firectl]: https://github.com/firecracker-microvm/firectl
+[jo]: https://github.com/jpmens/jo
 [juju]: https://juju.is
 [kernel-config-minimal]: ./config/kernel-config-minimal
 [kernel-config-jammy-modified]: ./config/kernel-config-jammy-modified

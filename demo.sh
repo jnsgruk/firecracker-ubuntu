@@ -13,6 +13,7 @@ source "${FC_CONFIG:-default.conf}"
 # Check for some dependencies
 command -v firecracker >/dev/null || (echo "could not find firecracker in PATH"; exit 1)
 command -v firectl >/dev/null || (echo "could not find firectl in PATH"; exit 1)
+command -v jo >/dev/null || (echo "could not find jo in PATH"; exit 1)
 if [[ -z "${FC_DHCP:-}" ]]; then
   command -v dnsmasq >/dev/null || (echo "could not find dnsmasq in PATH"; exit 1)
 fi
@@ -50,13 +51,22 @@ GENERATED_DISK="${DOWNLOAD_DIR}/disk.ext4"
 if [[ ! -f "$GENERATED_DISK" ]]; then
   _info "Generating disk image from ${DOWNLOAD_DIR}/${IMAGE}"
   # Create a disk image we can use from the downloaded rootfs
-  truncate -s "2G" "$GENERATED_DISK"
-  mkfs.ext4 "$GENERATED_DISK" > /dev/null 2>&1
+  truncate -s "5G" "$GENERATED_DISK"
+  # The ubuntu cloud image attempts a remount on the fs with label "cloudimg-rootfs" on boot
+  mkfs.ext4 "$GENERATED_DISK" -L "cloudimg-rootfs" > /dev/null 2>&1
   # Mount the new disk image to a temporary directory
   tmpdir=$(mktemp -d)
   sudo mount "$GENERATED_DISK" -o loop "$tmpdir"
   # Extract the dowloaded disk image into the new disk image
   sudo tar -C "$tmpdir" -xf "${DOWNLOAD_DIR}/${IMAGE}"
+  # Creating this override file stops systemd-netword-wait-online from waiting for the metadata
+  # interface to be online, causing the boot to wait for long periods
+  sudo mkdir -p $tmpdir/etc/systemd/system/systemd-networkd-wait-online.service.d
+  cat <<EOF | sudo tee $tmpdir/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any
+EOF
   # Cleanup
   sudo umount "$tmpdir"
   rm -rf "$tmpdir"
@@ -71,10 +81,11 @@ if [[ ! -f "${DOWNLOAD_DIR}/vmlinux" ]]; then
   rm -rf "$tmpdir"
 fi
 
-mkdir -p "$(pwd)/vm"
-VM_ROOTFS="$(pwd)/vm/vmdisk.ext4"
-VM_KERNEL="$(pwd)/vm/vmlinux"
-VM_INITRD="$(pwd)/vm/initrd"
+VM_DIR="$(pwd)/vm"
+mkdir -p "$VM_DIR"
+VM_ROOTFS="${VM_DIR}/vmdisk.ext4"
+VM_KERNEL="${VM_DIR}/vmlinux"
+VM_INITRD="${VM_DIR}/initrd"
 
 if [[ ! -f "$VM_ROOTFS" ]]; then
   # If there is no vm directory, create one and move the built kernel image and rootfs
@@ -85,90 +96,147 @@ if [[ ! -f "$VM_ROOTFS" ]]; then
     cp "$GENERATED_DISK" "$VM_ROOTFS"
     # Resize image to 20G
     truncate -s "$FC_DISK" "$VM_ROOTFS"
-    resize2fs "$VM_ROOTFS" >/dev/null 2>&1 || e2fsck -f "$VM_ROOTFS" >/dev/null 2>&1
+    resize2fs "$VM_ROOTFS" >/dev/null 2>&1 || e2fsck -f "$VM_ROOTFS" >/dev/null 2>&1 || true
   fi
-
 fi
 [[ -e "$VM_KERNEL" ]] || ln -s "${DOWNLOAD_DIR}/vmlinux" "$VM_KERNEL"
 [[ -e "$VM_INITRD" ]] || ln -s "${DOWNLOAD_DIR}/${INITRD}" "$VM_INITRD"
 
-# Kernel command line for the VM
-KERNEL_OPTS="init=/bin/systemd noapic reboot=k panic=1 pci=off console=ttyS0 systemd.hostname=${FC_HOSTNAME}"
 # Get the device name of the default gateway on the host
 DEVICE_NAME="$(\ip route get 8.8.8.8 | grep uid |sed "s/.* dev \([^ ]*\) .*/\1/")"
-# Generate a name for the tap interface
-TAP_IFACE="fctap0$(openssl rand -hex 2)"
+# Generate a name for the tap interfaces
+TAP_IFACE_MAIN="fctap0$(openssl rand -hex 2)"
+TAP_IFACE_META="fctap0$(openssl rand -hex 2)"
 
-if [[ -z "${FC_DHCP:-}" ]]; then
-  # Do some network interface setup if not already complete
-  if ! ip l | grep -q "$TAP_IFACE"; then
-    sudo ip tuntap add dev "$TAP_IFACE" mode tap user "$(whoami)"
-    sudo ip addr add 172.20.0.1/24 dev "$TAP_IFACE"
-    sudo ip link set "$TAP_IFACE" up
-    sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
-    sudo iptables -t nat -A POSTROUTING -o "$DEVICE_NAME" -j MASQUERADE
-    sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -i "$TAP_IFACE" -o "$DEVICE_NAME" -j ACCEPT
-  fi
+# If there is no bridge interface, create one
+BR_IFACE="fcbr0"
+if ! ip l | grep -q "$BR_IFACE"; then
+  sudo ip link add name "$BR_IFACE" type bridge
+  sudo ip addr add 172.20.0.1/24 dev "$BR_IFACE"
+  sudo ip link set "$BR_IFACE" up
 
-  KERNEL_OPTS="${KERNEL_OPTS} ip=172.20.0.2::172.20.0.1:255.255.255.0::eth0:off"
-else
-  BR_IFACE="fcbr0"
-  
-  # If there is no bridge interface, create one
-  if ! ip l | grep -q "$BR_IFACE"; then
-    sudo ip link add name "$BR_IFACE" type bridge
-    sudo ip addr add 172.20.0.1/24 dev "$BR_IFACE"
-    sudo ip link set "$BR_IFACE" up
-
-    sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
-    sudo iptables -t nat -A POSTROUTING -o "$DEVICE_NAME" -j MASQUERADE
-    sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-    sudo iptables -A FORWARD -i "$BR_IFACE" -o "$DEVICE_NAME" -j ACCEPT
-  fi
-
-  # Create a tap interface for the specific VM, add it to the bridge
-  if ! ip l | grep -q "$TAP_IFACE"; then
-    sudo ip tuntap add dev "$TAP_IFACE" mode tap # user "$(whoami)"
-    sudo ip link set "$TAP_IFACE" master "$BR_IFACE"
-    sudo ip link set "$TAP_IFACE" up
-  fi
-
-  # Start dnsmasq for DHCP/DNS on the bridge
-  sudo dnsmasq \
-    --strict-order \
-    --bind-interfaces \
-    --log-facility="$(pwd)/dnsmasq.log" \
-    --pid-file="$(pwd)/dnsmasq.pid" \
-    --dhcp-leasefile="$(pwd)/dnsmasq.leases" \
-    --dhcp-hostsfile="$(pwd)/dnsmasq.hosts" \
-    --domain=firecracker \
-    --local=/firecracker/ \
-    --except-interface=lo \
-    --interface="$BR_IFACE" \
-    --listen-address=172.20.0.1 \
-    --dhcp-no-override \
-    --dhcp-authoritative \
-    --dhcp-range 172.20.0.2,172.20.0.100,infinite
-
-  KERNEL_OPTS="${KERNEL_OPTS} ip=dhcp"
+  sudo sh -c "echo 1 > /proc/sys/net/ipv4/ip_forward"
+  sudo iptables -t nat -A POSTROUTING -o "$DEVICE_NAME" -j MASQUERADE
+  sudo iptables -I FORWARD -i "$BR_IFACE" -j ACCEPT
+  sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 fi
+
+# Create the main network interface for the VM
+if ! ip l | grep -q "$TAP_IFACE_MAIN"; then
+  sudo ip tuntap add dev "$TAP_IFACE_MAIN" mode tap 
+  sudo ip link set "$TAP_IFACE_MAIN" up
+  sudo ip link set "$TAP_IFACE_MAIN" master "$BR_IFACE"
+fi
+
+# Create a network interface for the MMDS
+if ! ip l | grep -q "$TAP_IFACE_META"; then
+  sudo ip tuntap add dev "$TAP_IFACE_META" mode tap
+  sudo ip link set "$TAP_IFACE_META" up
+fi
+
+TAP_IFACE_MAIN_MAC="$(cat "/sys/class/net/${TAP_IFACE_MAIN}/address")"
+TAP_IFACE_META_MAC="$(cat "/sys/class/net/${TAP_IFACE_META}/address")"
+
+# Start dnsmasq for DHCP/DNS on the bridge
+sudo dnsmasq \
+  --strict-order \
+  --bind-interfaces \
+  --log-facility="$(pwd)/dnsmasq.log" \
+  --pid-file="$(pwd)/dnsmasq.pid" \
+  --dhcp-leasefile="$(pwd)/dnsmasq.leases" \
+  --dhcp-hostsfile="$(pwd)/dnsmasq.hosts" \
+  --domain=firecracker \
+  --local=/firecracker/ \
+  --except-interface=lo \
+  --interface="$BR_IFACE" \
+  --listen-address=172.20.0.1 \
+  --dhcp-no-override \
+  --dhcp-authoritative \
+  --dhcp-range 172.20.0.2,172.20.0.100,infinite
+
+tmpdir="$(mktemp -d)"
+# Start Firecracker
+
+SOCKET="${VM_DIR}/.firecracker.socket"
+LOG="${VM_DIR}/.firecracker.log"
+CONSOLE_OUTPUT="${VM_DIR}/.firecracker.console.log"
+touch "$LOG"
+rm -f "$SOCKET"
+firecracker --api-sock "$SOCKET" --log-path "$LOG" --level "Debug" &> "$CONSOLE_OUTPUT" &
+PID="$!"
+echo "$PID" > "${VM_DIR}/.firecracker.pid"
+
+# Wait for API server to start
+while [[ ! -e "$SOCKET" ]]; do sleep 0.1s; done
+_info "Started firecracker; log file ${LOG}; pid ${PID}"
+
+function fccurl() {
+  curl --unix-socket "$SOCKET" \
+    -H "Accept: application/json" -H "Content-Type: application/json" \
+    -X "$1" "http://localhost/$2" -d "$3"
+}
+function fccurl_file() {
+  curl --unix-socket "$SOCKET" \
+    -H "Accept: application/json" -H "Content-Type: application/json" \
+    -X "$1" "http://localhost/$2" --data-binary @"$3"
+}
+
+# Setup the machine CPU/Memory
+fccurl PUT "machine-config" "$(jo vcpu_count=${FC_CPUS} mem_size_mib=${FC_MEMORY})"
+
+# Setup the root filesystem drive
+fccurl PUT "drives/rootfs" \
+  "$(jo drive_id=rootfs path_on_host=$VM_ROOTFS is_root_device=true is_read_only=false)"
+
+# Setup the eth0 interface - this is for the MMDS
+fccurl PUT "network-interfaces/eth0" \
+  "$(jo iface_id=eth0 guest_mac=${TAP_IFACE_META_MAC} host_dev_name=${TAP_IFACE_META})"
+
+# Set the interface for the MMDS
+fccurl PUT "mmds/config" "$(jo network_interfaces\[\]=eth0)"
+
+# Setup the eth1 interface - this is the main network adapter
+fccurl PUT "network-interfaces/eth1" \
+  "$(jo iface_id=eth1 guest_mac=${TAP_IFACE_MAIN_MAC} host_dev_name=${TAP_IFACE_MAIN})"
+
+# Configure the boot source
+cat <<EOF > "$tmpdir/netconf.yaml"
+version: 2
+ethernets:
+  eth0:
+    match:
+       macaddress: ${TAP_IFACE_META_MAC}
+    addresses:
+      - 169.254.0.1/16
+  eth1:
+    match:
+      macaddress: ${TAP_IFACE_MAIN_MAC}
+    dhcp4: true
+EOF
+NETCONFIG="$(cat "$tmpdir/netconf.yaml" | gzip --stdout - | base64 -w0)"
+KERNEL_OPTS="reboot=k panic=1 pci=off console=ttyS0 ds=nocloud-net;s=http://169.254.169.254/latest/ network-config=$NETCONFIG"
+
+# Setup the eth1 interface - this is the main network adapter
+fccurl PUT "boot-source" \
+  "$(jo kernel_image_path=${VM_KERNEL} boot_args="${KERNEL_OPTS}" initrd_path=${VM_INITRD})"
+
+# Metadata
+cat <<EOF | jq --raw-input --slurp '{ "latest": { "meta-data": . }}' > "$tmpdir/meta.yaml"
+instance-id: ${FC_HOSTNAME}
+local-hostname: ${FC_HOSTNAME}
+EOF
+
+fccurl PUT "mmds" "$(cat "$tmpdir/meta.yaml")"
+
+# Add user-data to metadata service
+fccurl PATCH "mmds" \
+  "$(cat user-data.yaml | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 
 # Start the VM
-firectl \
-    --ncpus "$FC_CPUS" \
-    --memory "$FC_MEMORY" \
-    --kernel="$VM_KERNEL" \
-    --initrd-path="$VM_INITRD" \
-    --root-drive="$VM_ROOTFS" \
-    --tap-device="${TAP_IFACE}/$(cat "/sys/class/net/${TAP_IFACE}/address")" \
-    --kernel-opts="$KERNEL_OPTS"
+fccurl PUT "actions" "$(jo action_type=InstanceStart)"
 
-# Cleanup and remove interfaces once the machine has gone down
-sudo ip link del "$TAP_IFACE"
+rm -rf "$tmpdir"
+while ! cat ./dnsmasq.leases | grep "$TAP_IFACE_MAIN_MAC"; do sleep 0.5s; done
 
-if [[ -n "${FC_DHCP:-}" ]]; then
-  sudo kill -9 "$(cat dnsmasq.pid)"
-  sudo ip link del "$BR_IFACE"
-  sudo rm "$(pwd)/dnsmasq.pid"
-fi
+ip=$(cat dnsmasq.leases | grep "$TAP_IFACE_MAIN_MAC" | cut -d" " -f3)
+_info "Connect with ssh ubuntu@$ip"
