@@ -10,5 +10,4 @@ dnsmasq.pid
 dnsmasq.log
 
 custom.conf
-userdata.yaml
 _userdata.yaml
