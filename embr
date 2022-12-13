@@ -5,10 +5,13 @@ set -euo pipefail
 # Helper methods for pretty output
 _info() { echo -e "\e[92m[INFO] ${1:-}\e[0m"; }
 _warn() { echo -e "\e[33m[WARN] ${1:-}\e[0m"; }
-_error() { echo -e >&2 "\e[31m[ERROR] ${1:-}\e[0m"; exit 1; }
-_debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e >&2 "[DEBG] ${1:-}"; fi; }
+_error() {
+	echo -e "\e[31m[ERROR] ${1:-}\e[0m" >&2
+	exit 1
+}
+_debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e "[DEBG] ${1:-}" >&2; fi; }
 
-SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR="${XDG_RUNTIME_DIR}/firecracker"
 
 # VM Configuration
@@ -19,15 +22,21 @@ VM_HOSTNAME="${VM_HOSTNAME:-dev}"
 VM_SERIES="${VM_SERIES:-jammy}"
 VM_USERDATA="${SCRIPT_DIR}/userdata.yaml"
 
+# This is a JSON representation of a cloud-init file. This is a bit of a hack, and it's
+# later turned into yaml with the correct '#cloud-config' heading using 'yq'. It's done
+# like this to work around awkwardness with how heredocs handle spaces/tabs/indentation.
 read -r -d '' USERDATA_TEMPLATE <<-EOF || true
-#cloud-config
-users:
-  - name: ubuntu
-    shell: /bin/bash
-    groups: sudo
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-      - __KEY__
+	{
+		"users": [
+			{
+				"name": "ubuntu",
+				"shell": "/bin/bash",
+				"groups": "sudo",
+				"sudo": "ALL=(ALL) NOPASSWD:ALL",
+				"ssh_authorized_keys": ["__KEY__"]
+			}
+		]
+	}
 EOF
 
 # Helper method for generating MAC octets
@@ -60,7 +69,7 @@ _firecracker_api_call() {
 		-H "Content-Type: application/json" \
 		-d "$data" \
 		-X "$method" "http://localhost/$endpoint"
-	
+
 	_debug "Firecracker API request complete: $method $endpoint:\n$data"
 }
 
@@ -76,7 +85,7 @@ cleanup() {
 
 	# Kill each of the firecracker processes that are started
 	if [[ -n "${PURGE:-}" ]]; then
-		if pidof -q firecracker; then 
+		if pidof -q firecracker; then
 			sudo killall firecracker
 		fi
 	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
@@ -91,10 +100,10 @@ cleanup() {
 	fi
 
 	# Clean up network interfaces that are created by the script
-	for iface in $(\ip --brief link | grep -Po "embrtap0[^ ]+|embr[^ ]+"); do 
-		sudo ip l del "$iface";
+	for iface in $(\ip --brief link | grep -Po "embrtap0[^ ]+|embr[^ ]+"); do
+		sudo ip l del "$iface"
 		_info "Deleted interface: $iface"
-	done;
+	done
 
 	# Directories to delete
 	directories=("${SCRIPT_DIR}/vm" "${RUNTIME_DIR}")
@@ -114,7 +123,7 @@ check_dependencies() {
 	# Ensure we have all the dependenices we need to run this demo
 	deps=(firecracker yq jq dnsmasq)
 	for d in "${deps[@]}"; do
-		if ! command -v "$d" >/dev/null; then 
+		if ! command -v "$d" >/dev/null; then
 			_error "Could not find '$d' in \$PATH"
 		fi
 	done
@@ -139,27 +148,27 @@ process_cloud_image_artefacts() {
 	# Check the disk image we generate is there; if not generate it
 	if [[ ! -f "${SERIES_ROOTFS_FILE}" ]]; then
 		_info "Generating disk image for series '${VM_SERIES}'"
-		
+
 		# Create a new rootfs file
 		truncate -s "2G" "$SERIES_ROOTFS_FILE"
 		# Create an ext4 filesystem from our rootfs file
-		mkfs.ext4 "$SERIES_ROOTFS_FILE" -L "cloudimg-rootfs" > /dev/null 2>&1
+		mkfs.ext4 "$SERIES_ROOTFS_FILE" -L "cloudimg-rootfs" >/dev/null 2>&1
 		# Mount the new disk image to a temporary directory
 		tmpdir="$(mktemp -d)"
 		sudo mount "$SERIES_ROOTFS_FILE" -o loop "$tmpdir"
 		# Extract the dowloaded disk image into the new disk image
 		sudo tar -C "$tmpdir" -xf "${DOWNLOAD_DIR}/${CI_ROOTFS_FILE}"
-		
+
 		# Creating this override file stops systemd-netword-wait-online from waiting for the metadata
 		# interface to be online, causing the boot to wait for long periods
 		sdnd_override_dir="${tmpdir}/etc/systemd/system/systemd-networkd-wait-online.service.d"
 		sudo mkdir -p "$sdnd_override_dir"
 		cat <<-EOF | sudo tee "$sdnd_override_dir/override.conf" >/dev/null
-				[Service]
-				ExecStart=
-				ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any
-				EOF
-		
+			[Service]
+			ExecStart=
+			ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any
+		EOF
+
 		# Unmount and cleanup the tmpdir
 		sudo umount "$tmpdir"
 		rm -rf "$tmpdir"
@@ -172,8 +181,9 @@ process_cloud_image_artefacts() {
 		_info "Extracting kernel image for series '${VM_SERIES}'"
 		tmpdir="$(mktemp -d)"
 		_debug "Downloading 'extract-vmlinux' script from Github"
-		_download "https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux" "${tmpdir}/extract-vmlinux"
-		bash "${tmpdir}/extract-vmlinux" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" > "${SERIES_KERNEL_FILE}"
+		url="https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux"
+		_download "$url" "${tmpdir}/extract-vmlinux"
+		bash "${tmpdir}/extract-vmlinux" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" >"${SERIES_KERNEL_FILE}"
 		rm -rf "$tmpdir"
 	else
 		_debug "File '${SERIES_KERNEL_FILE}' already exists; skipping generation"
@@ -200,7 +210,7 @@ setup_network_bridge() {
 		sudo ip addr add 172.20.0.1/24 dev "$BRIDGE_IFACE"
 		sudo ip link set "$BRIDGE_IFACE" up
 		# Setup the iptables and packet forwarding rules
-		sudo sysctl -w net.ipv4.ip_forward=1 &> /dev/null
+		sudo sysctl -w net.ipv4.ip_forward=1 &>/dev/null
 		sudo iptables -t nat -A POSTROUTING -o "$default_interface" -j MASQUERADE
 		sudo iptables -I FORWARD -i "$BRIDGE_IFACE" -j ACCEPT
 		sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -240,7 +250,7 @@ start_dnsmasq() {
 		--dhcp-no-override \
 		--dhcp-authoritative \
 		--dhcp-range "172.20.0.2,172.20.0.100,infinite"
-	
+
 	dnsmasq_pid="$(cat "${dnsmasq_dir}/pid")"
 	_info "Started dnsmasq; PID: ${dnsmasq_pid}; logs: '${dnsmasq_dir}/log'"
 }
@@ -263,8 +273,8 @@ create_vm() {
 
 	# Create symlinks for the kernel and initrd files
 	if [[ ! -e "$VM_KERNEL_FILE" ]]; then
-			_debug "Symlinking kernel '${SERIES_KERNEL_FILE}' to '${VM_KERNEL_FILE}'"
-		 ln -s "$SERIES_KERNEL_FILE" "$VM_KERNEL_FILE"
+		_debug "Symlinking kernel '${SERIES_KERNEL_FILE}' to '${VM_KERNEL_FILE}'"
+		ln -s "$SERIES_KERNEL_FILE" "$VM_KERNEL_FILE"
 	else
 		_debug "VM kernel symlink '${VM_KERNEL_FILE}' already exists; skipping creation"
 	fi
@@ -282,14 +292,14 @@ create_vm() {
 
 	# Create the main network interface for the VM
 	if ! ip l | grep -q "$TAP_IFACE_MAIN"; then
-		sudo ip tuntap add dev "$TAP_IFACE_MAIN" mode tap 
+		sudo ip tuntap add dev "$TAP_IFACE_MAIN" mode tap
 		TAP_IFACE_MAIN_MAC="$(cat "/sys/class/net/${TAP_IFACE_MAIN}/address")"
 		TAP_IFACE_MAIN_MAC_INT="$(_random_mac)"
 		_info "Created tap interface '${TAP_IFACE_MAIN}' with MAC '${TAP_IFACE_MAIN_MAC}'"
-		
+
 		sudo ip link set "$TAP_IFACE_MAIN" up
 		_debug "Set interface '${TAP_IFACE_MAIN}' up"
-		
+
 		sudo ip link set "$TAP_IFACE_MAIN" master "$BRIDGE_IFACE"
 		_info "Added tap interface '${TAP_IFACE_MAIN}' to bridge '${BRIDGE_IFACE}'"
 	fi
@@ -300,46 +310,46 @@ create_vm() {
 		TAP_IFACE_META_MAC="$(cat "/sys/class/net/${TAP_IFACE_META}/address")"
 		TAP_IFACE_META_MAC_INT="$(_random_mac)"
 		_info "Created tap interface '${TAP_IFACE_META}' with MAC '${TAP_IFACE_META_MAC}'"
-		
+
 		sudo ip link set "$TAP_IFACE_META" up
 		_debug "Set interface '${TAP_IFACE_META}' up"
 	fi
 
-	cat <<-EOF | jq > "$VM_DIR/vm.json"
-	{
-		"name": "$VM_HOSTNAME",
-		"specs": {
-			"vcpu_count": $VM_CPUS,
-			"mem_size_mib": $(( 1024 * "$VM_MEMORY" ))
-		},
-		"interfaces": [
-			{
-				"iface_id": "eth0",
-				"host_dev_name": "$TAP_IFACE_META",
-				"guest_mac": "$TAP_IFACE_META_MAC_INT"
+	cat <<-EOF | jq >"$VM_DIR/vm.json"
+		{
+			"name": "$VM_HOSTNAME",
+			"specs": {
+				"vcpu_count": $VM_CPUS,
+				"mem_size_mib": $((1024 * "$VM_MEMORY"))
 			},
-			{
-				"iface_id": "eth1",
-				"host_dev_name": "$TAP_IFACE_MAIN",
-				"guest_mac": "$TAP_IFACE_MAIN_MAC_INT"
-			}
-		],
-		"boot_sources": {
-			"kernel_image_path": "$VM_KERNEL_FILE",
-			"initrd_path": "$VM_INITRD_FILE"
-		},
-		"disks": {
-			"rootfs": {
-				"drive_id": "rootfs",
-				"path_on_host": "$VM_ROOTFS_FILE",
-				"is_root_device": true,
-				"is_read_only": false
+			"interfaces": [
+				{
+					"iface_id": "eth0",
+					"host_dev_name": "$TAP_IFACE_META",
+					"guest_mac": "$TAP_IFACE_META_MAC_INT"
+				},
+				{
+					"iface_id": "eth1",
+					"host_dev_name": "$TAP_IFACE_MAIN",
+					"guest_mac": "$TAP_IFACE_MAIN_MAC_INT"
+				}
+			],
+			"boot_sources": {
+				"kernel_image_path": "$VM_KERNEL_FILE",
+				"initrd_path": "$VM_INITRD_FILE"
+			},
+			"disks": {
+				"rootfs": {
+					"drive_id": "rootfs",
+					"path_on_host": "$VM_ROOTFS_FILE",
+					"is_root_device": true,
+					"is_read_only": false
+				}
 			}
 		}
-	}
 	EOF
 	_info "Created virtual machine"
-	_debug "Virtual machine config:\n$(jq < "${VM_DIR}/vm.json")"
+	_debug "Virtual machine config:\n$(jq <"${VM_DIR}/vm.json")"
 }
 
 start_firecracker() {
@@ -352,10 +362,10 @@ start_firecracker() {
 	firecracker \
 		--api-sock "$FIRECRACKER_SOCKET" \
 		--log-path "$FIRECRACKER_LOG" \
-		--level "Debug" &> "$FIRECRACKER_CONSOLE_LOG" &
-	
+		--level "Debug" &>"$FIRECRACKER_CONSOLE_LOG" &
+
 	pid="$!"
-	echo "$pid" > "${FIRECRACKER_PID}"
+	echo "$pid" >"${FIRECRACKER_PID}"
 
 	# Wait for API server to start
 	while [[ ! -e "$FIRECRACKER_SOCKET" ]]; do sleep 0.1s; done
@@ -365,7 +375,7 @@ start_firecracker() {
 configure_vm() {
 	local vconf netconfig metadata cmdline data
 	vconf="$VM_DIR/vm.json"
-	
+
 	# Setup the machine CPU/Memory
 	_firecracker_api_call PUT "machine-config" "$(jq .specs "$vconf")"
 
@@ -385,25 +395,25 @@ configure_vm() {
 
 	# Configure the boot source
 	read -r -d '' netconfig <<-EOF || true
-	{
-		"version": 2,
-		"ethernets": {
-			"eth0": {
-				"match": {
-					"macaddress": "$(jq -r '.interfaces[]|select(.iface_id=="eth0")|.guest_mac' "$vconf")"
+		{
+			"version": 2,
+			"ethernets": {
+				"eth0": {
+					"match": {
+						"macaddress": "$(jq -r '.interfaces[]|select(.iface_id=="eth0")|.guest_mac' "$vconf")"
+					},
+					"addresses": ["169.254.0.1/16"]
 				},
-				"addresses": ["169.254.0.1/16"]
-			},
-			"eth1": {
-				"match": {
-					"macaddress": "$(jq -r '.interfaces[]|select(.iface_id=="eth1")|.guest_mac' "$vconf")"
-				},
-				"dhcp4": true
+				"eth1": {
+					"match": {
+						"macaddress": "$(jq -r '.interfaces[]|select(.iface_id=="eth1")|.guest_mac' "$vconf")"
+					},
+					"dhcp4": true
+				}
 			}
 		}
-	}
 	EOF
-	
+
 	cmdline="reboot=k panic=1 pci=off console=ttyS0"
 	# Add the nocloud datasource for cloud-init to the kernel command line
 	cmdline="${cmdline} ds=nocloud-net;s=http://169.254.169.254/latest/"
@@ -416,9 +426,9 @@ configure_vm() {
 
 	# Set some metadata on the MMDS
 	read -r -d '' metadata <<-EOF || true
-	{
-		"local-hostname": "${VM_HOSTNAME}"
-	}
+		{
+			"local-hostname": "${VM_HOSTNAME}"
+		}
 	EOF
 
 	data="$(echo "$metadata" | yq -P . | jq --raw-input --slurp '{ "latest": { "meta-data": . }}')"
@@ -426,13 +436,14 @@ configure_vm() {
 
 	# If there is a provided userdata file, then use it; otherwise generate one
 	if [[ -f "$VM_USERDATA" ]]; then
-		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' < $VM_USERDATA)"
+		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' <"$VM_USERDATA")"
 		_firecracker_api_call PATCH "mmds" "$data"
 	else
 		# Generate an ssh-key for use with the VM
 		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_ed25519"
 		# Update the userdata template with the new key
 		userdata="${USERDATA_TEMPLATE//__KEY__/$(cat "${VM_DIR}/id_ed25519.pub")}"
+		userdata="$(echo -e "#cloud-config\n$(echo "$userdata" | yq -P .)")"
 		# Configure firecracker with the vendor data
 		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' <<<"$userdata")"
 		_firecracker_api_call PATCH "mmds" "$data"
@@ -449,7 +460,7 @@ start_vm() {
 	VM_SSH_IP="$(grep "$TAP_IFACE_MAIN_MAC_INT" "${RUNTIME_DIR}/dnsmasq/leases" | cut -d' ' -f3)"
 
 	# Figure out the ssh user and key
-	# TODO(jnsgruk): make this a little less naive. 
+	# TODO(jnsgruk): make this a little less naive.
 	if [[ ! -f "${VM_USERDATA}" ]]; then
 		# If there is no user data file, then fallback to the defaults
 		VM_SSH_USER="ubuntu"
@@ -467,9 +478,9 @@ start_vm() {
 	[[ -n "${VM_SSH_KEY:-}" ]] && connect_cmd="${connect_cmd}-i ${VM_SSH_KEY} "
 	[[ -n "${VM_SSH_USER:-}" ]] && connect_cmd="${connect_cmd}${VM_SSH_USER}@"
 	connect_cmd="${connect_cmd}${VM_SSH_IP}"
-	
+
 	_info "Waiting for SSH server to become available"
-	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 1s; done
+	while ! nc -w1 "${VM_SSH_IP}" 22 &>/dev/null; do sleep 1s; done
 
 	_info "Connect to virtual machine with: '${connect_cmd}'"
 }
@@ -638,8 +649,9 @@ entrypoint() {
 					usage_launch
 					exit 0
 					;;
-				--) shift; 
-					break 
+				--)
+					shift
+					break
 					;;
 			esac
 		done
@@ -661,8 +673,9 @@ entrypoint() {
 					usage_clean
 					exit 0
 					;;
-				--) shift; 
-					break 
+				--)
+					shift
+					break
 					;;
 			esac
 		done

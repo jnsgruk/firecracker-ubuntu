@@ -117,5 +117,4 @@ OPTIONS:
 [juju]: https://juju.is
 [microk8s]: https://microk8s.io
 [ubuntu-firecracker]: https://github.com/bkleiner/ubuntu-firecracker
-[userdata.yaml]: ./userdata.yaml
 [yq]: https://mikefarah.gitbook.io/yq/
