@@ -62,11 +62,11 @@ EOF
 # Helper method for downloading a file to a location on disk
 _download() {
 	if [[ -f "$2" ]]; then
-		_debug "File ${2} already exists; skipping download"
+		_debug "File '${2}' already exists; skipping download"
 	else
 		_info "Downloading: $1"
 		curl -fsSL -o "$2" "$1"
-		_debug "Downloaded ${1} to ${2}"
+		_debug "Downloaded '${1}' to '${2}'"
 	fi
 }
 
@@ -141,27 +141,27 @@ process_cloud_image_artefacts() {
 		sudo umount "$tmpdir"
 		rm -rf "$tmpdir"
 	else
-		_debug "File ${SERIES_ROOTFS_FILE} already exists; skipping generation"
+		_debug "File '${SERIES_ROOTFS_FILE}' already exists; skipping generation"
 	fi
 
 	# Extract the vmlinux from the kernel image
 	if [[ ! -f "${SERIES_KERNEL_FILE}" ]]; then
 		_info "Extracting kernel image for series '${FC_SERIES}'"
 		tmpdir="$(mktemp -d)"
-		_debug "Downloading extract-vmlinux script from Github"
+		_debug "Downloading 'extract-vmlinux' script from Github"
 		_download "https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux" "${tmpdir}/extract-vmlinux"
 		bash "${tmpdir}/extract-vmlinux" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" > "${SERIES_KERNEL_FILE}"
 		rm -rf "$tmpdir"
 	else
-		_debug "File ${SERIES_KERNEL_FILE} already exists; skipping generation"
+		_debug "File '${SERIES_KERNEL_FILE}' already exists; skipping generation"
 	fi
 
 	# Copy the initrd into the series folder
 	if [[ ! -f "${SERIES_INITRD_FILE}" ]]; then
-		_info "Copying initrd file for'${FC_SERIES}'"
+		_info "Copying initrd file for '${FC_SERIES}'"
 		cp "${DOWNLOAD_DIR}/${CI_INITRD_FILE}" "${SERIES_INITRD_FILE}"
 	else
-		_debug "File ${SERIES_INITRD_FILE} already exists; skipping copy"
+		_debug "File '${SERIES_INITRD_FILE}' already exists; skipping copy"
 	fi
 }
 
@@ -181,9 +181,9 @@ setup_network_bridge() {
 		sudo iptables -t nat -A POSTROUTING -o "$default_interface" -j MASQUERADE
 		sudo iptables -I FORWARD -i "$FC_BRIDGE_IFACE" -j ACCEPT
 		sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-		_info "Created bridge interface ${FC_BRIDGE_IFACE}"
+		_info "Created bridge interface '${FC_BRIDGE_IFACE}'"
 	else
-		_debug "Bridge interface ${FC_BRIDGE_IFACE} already exists"
+		_debug "Bridge interface '${FC_BRIDGE_IFACE}' already exists"
 	fi
 }
 
@@ -197,7 +197,7 @@ start_dnsmasq() {
 		dnsmasq_pid="$(cat "${dnsmasq_dir}/pid")"
 		# If the PID exists in /proc, assume dnsmasq is running okay and just return
 		if [[ -d "/proc/${dnsmasq_pid}" ]]; then
-			_debug "Found existing dnsmasq process; PID ${dnsmasq_pid}"
+			_info "Found existing dnsmasq process; PID: ${dnsmasq_pid}"
 			return
 		fi
 	fi
@@ -219,15 +219,14 @@ start_dnsmasq() {
 		--dhcp-range "172.20.0.2,172.20.0.100,infinite"
 	
 	dnsmasq_pid="$(cat "${dnsmasq_dir}/pid")"
-	_info "Started dnsmasq; PID ${dnsmasq_pid}; log "${dnsmasq_dir}/log""
+	_info "Started dnsmasq; PID: ${dnsmasq_pid}; logs: '${dnsmasq_dir}/log'"
 }
 
 create_vm() {
-	_info "Creating virtual machine"
 	mkdir -p "$VM_DIR"
 
 	if [[ ! -f "$VM_ROOTFS_FILE" ]]; then
-		_debug "Creating and resizing disk image: '${VM_ROOTFS_FILE}' to '${FC_DISK}'"
+		_debug "Creating and resizing disk image '${VM_ROOTFS_FILE}' to '${FC_DISK}'"
 		# If there is no vm directory, create one and move the built kernel image and rootfs
 		# into the directory before we try to boot it
 		# Copy the series rootfs into the VM directory
@@ -236,7 +235,7 @@ create_vm() {
 		truncate -s "$FC_DISK" "$VM_ROOTFS_FILE"
 		resize2fs "$VM_ROOTFS_FILE" >/dev/null 2>&1 || e2fsck -fpy "$VM_ROOTFS_FILE" >/dev/null 2>&1
 	else
-		_debug "VM disk image '$VM_ROOTFS_FILE' already exists; skipping creation"
+		_debug "VM disk image '${VM_ROOTFS_FILE}' already exists; skipping creation"
 	fi
 
 	# Create symlinks for the kernel and initrd files
@@ -244,17 +243,16 @@ create_vm() {
 			_debug "Symlinking kernel '${SERIES_KERNEL_FILE}' to '${VM_KERNEL_FILE}'"
 		 ln -s "$SERIES_KERNEL_FILE" "$VM_KERNEL_FILE"
 	else
-		_debug "VM kernel symlink '$VM_KERNEL_FILE' already exists; skipping creation"
+		_debug "VM kernel symlink '${VM_KERNEL_FILE}' already exists; skipping creation"
 	fi
 
 	if [[ ! -e "$VM_INITRD_FILE" ]]; then
 		_debug "Symlinking initrd '${SERIES_INITRD_FILE}' to '${VM_INITRD_FILE}'"
 		ln -s "$SERIES_INITRD_FILE" "$VM_INITRD_FILE"
 	else
-		_debug "VM initrd symlink '$VM_KERNEL_FILE' already exists; skipping creation"
+		_debug "VM initrd symlink '${VM_INITRD_FILE}' already exists; skipping creation"
 	fi
 
-	_info "Creating network interfaces for virtual machine"
 	# Generate a name for the tap interfaces
 	TAP_IFACE_MAIN="fctap0$(openssl rand -hex 2)"
 	TAP_IFACE_META="fctap0$(openssl rand -hex 2)"
@@ -266,7 +264,7 @@ create_vm() {
 		_info "Created tap interface '${TAP_IFACE_MAIN}' with MAC '${TAP_IFACE_MAIN_MAC}'"
 		
 		sudo ip link set "$TAP_IFACE_MAIN" up
-		_debug "Set interface '$TAP_IFACE_MAIN' up"
+		_debug "Set interface '${TAP_IFACE_MAIN}' up"
 		
 		sudo ip link set "$TAP_IFACE_MAIN" master "$FC_BRIDGE_IFACE"
 		_info "Added tap interface '${TAP_IFACE_MAIN}' to bridge '${FC_BRIDGE_IFACE}'"
@@ -279,7 +277,7 @@ create_vm() {
 		_info "Created tap interface '${TAP_IFACE_META}' with MAC '${TAP_IFACE_META_MAC}'"
 		
 		sudo ip link set "$TAP_IFACE_META" up
-		_debug "Set interface '$TAP_IFACE_META' up"
+		_debug "Set interface '${TAP_IFACE_META}' up"
 	fi
 
 	cat <<-EOF | jq > "$VM_DIR/vm.json"
@@ -315,13 +313,12 @@ create_vm() {
 		}
 	}
 	EOF
-
-	_debug "Virtual machine created with config: \n$(cat "${VM_DIR}/vm.json" | jq)"
+	_info "Created virtual machine"
+	_debug "Virtual machine config:\n$(cat "${VM_DIR}/vm.json" | jq)"
 }
 
 start_firecracker() {
 	local pid
-	_info "Starting firecracker"
 	mkdir -p "${RUNTIME_VM_DIR}"
 	touch "$FIRECRACKER_LOG"
 	rm -f "$FIRECRACKER_SOCKET"
@@ -337,7 +334,7 @@ start_firecracker() {
 
 	# Wait for API server to start
 	while [[ ! -e "$FIRECRACKER_SOCKET" ]]; do sleep 0.1s; done
-	_info "Started firecracker; PID $pid; log ${FIRECRACKER_LOG}"
+	_info "Started firecracker; PID: ${pid}; logs: '${FIRECRACKER_LOG}'"
 }
 
 configure_vm() {
@@ -418,11 +415,10 @@ configure_vm() {
 }
 
 start_vm() {
-	# Start the VM
-	_info "Starting VM"
 	_firecracker_api_call PUT "actions" "{\"action_type\": \"InstanceStart\"}"
+	_info "Started virtual machine"
 
-	_info "Waiting for VM to get a DHCP lease"
+	_info "Waiting for virtual machine to get a DHCP lease"
 	while ! grep -q "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases"; do sleep 0.5s; done
 	# Grab the IP that's assigned to MAC of the interface attached to this VM
 	VM_SSH_IP="$(grep "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases" | cut -d' ' -f3)"
@@ -450,7 +446,7 @@ start_vm() {
 	_info "Waiting for SSH server to become available"
 	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 0.5s; done
 
-	_info "Connect to virtual machine with \`${connect_cmd}\`"
+	_info "Connect to virtual machine with: '${connect_cmd}'"
 }
 
 main() {
