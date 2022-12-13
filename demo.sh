@@ -39,8 +39,12 @@ VM_INITRD_FILE="${VM_DIR}/initrd"
 # Network interfaces for VM
 TAP_IFACE_MAIN=""
 TAP_IFACE_META=""
+# MAC addresses of tap interfaces on host
 TAP_IFACE_META_MAC=""
 TAP_IFACE_MAIN_MAC=""
+# MAC addresses of interfaces on the guest
+TAP_IFACE_META_MAC_INT=""
+TAP_IFACE_MAIN_MAC_INT=""
 
 # Filenames for firecracker
 FIRECRACKER_SOCKET="${RUNTIME_VM_DIR}/firecracker.socket"
@@ -58,6 +62,12 @@ users:
     ssh_authorized_keys:
       - __KEY__
 EOF
+
+# Helper method for generating MAC octets
+_random_octet() { printf '%02x' $((1 + $RANDOM % 99)); }
+
+# Helper method for generating random MAC addresses
+_random_mac() { echo "aa:bb:00:$(_random_octet):$(_random_octet):$(_random_octet)"; }
 
 # Helper method for downloading a file to a location on disk
 _download() {
@@ -261,6 +271,7 @@ create_vm() {
 	if ! ip l | grep -q "$TAP_IFACE_MAIN"; then
 		sudo ip tuntap add dev "$TAP_IFACE_MAIN" mode tap 
 		TAP_IFACE_MAIN_MAC="$(cat "/sys/class/net/${TAP_IFACE_MAIN}/address")"
+		TAP_IFACE_MAIN_MAC_INT="$(_random_mac)"
 		_info "Created tap interface '${TAP_IFACE_MAIN}' with MAC '${TAP_IFACE_MAIN_MAC}'"
 		
 		sudo ip link set "$TAP_IFACE_MAIN" up
@@ -274,6 +285,7 @@ create_vm() {
 	if ! ip l | grep -q "$TAP_IFACE_META"; then
 		sudo ip tuntap add dev "$TAP_IFACE_META" mode tap
 		TAP_IFACE_META_MAC="$(cat "/sys/class/net/${TAP_IFACE_META}/address")"
+		TAP_IFACE_META_MAC_INT="$(_random_mac)"
 		_info "Created tap interface '${TAP_IFACE_META}' with MAC '${TAP_IFACE_META_MAC}'"
 		
 		sudo ip link set "$TAP_IFACE_META" up
@@ -291,12 +303,12 @@ create_vm() {
 			{
 				"iface_id": "eth0",
 				"host_dev_name": "$TAP_IFACE_META",
-				"guest_mac": "$TAP_IFACE_META_MAC"
+				"guest_mac": "$TAP_IFACE_META_MAC_INT"
 			},
 			{
 				"iface_id": "eth1",
 				"host_dev_name": "$TAP_IFACE_MAIN",
-				"guest_mac": "$TAP_IFACE_MAIN_MAC"
+				"guest_mac": "$TAP_IFACE_MAIN_MAC_INT"
 			}
 		],
 		"boot_sources": {
@@ -419,9 +431,9 @@ start_vm() {
 	_info "Started virtual machine"
 
 	_info "Waiting for virtual machine to get a DHCP lease"
-	while ! grep -q "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases"; do sleep 0.5s; done
+	while ! grep -q "$TAP_IFACE_MAIN_MAC_INT" "${RUNTIME_DIR}/dnsmasq/leases"; do sleep 1s; done
 	# Grab the IP that's assigned to MAC of the interface attached to this VM
-	VM_SSH_IP="$(grep "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases" | cut -d' ' -f3)"
+	VM_SSH_IP="$(grep "$TAP_IFACE_MAIN_MAC_INT" "${RUNTIME_DIR}/dnsmasq/leases" | cut -d' ' -f3)"
 
 	# Figure out the ssh user and key
 	# TODO(jnsgruk): make this a little less naive. 
@@ -444,7 +456,7 @@ start_vm() {
 	connect_cmd="${connect_cmd}${VM_SSH_IP}"
 	
 	_info "Waiting for SSH server to become available"
-	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 0.5s; done
+	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 1s; done
 
 	_info "Connect to virtual machine with: '${connect_cmd}'"
 }
