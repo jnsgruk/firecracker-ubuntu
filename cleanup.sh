@@ -19,10 +19,14 @@ for iface in $(\ip --brief link | grep -Po "fctap0[^ ]+|fcbr[^ ]+"); do
 done;
 
 directories=(
-    # "$(pwd)/images"
     "$(pwd)/vm"
     "$XDG_RUNTIME_DIR/firecracker"
 )
+
+# If the PURGE variable is set, then delete downloaded images too
+if [[ -n "${PURGE:-}" ]]; then
+    directories+=("$(pwd)/images")
+fi
 
 for d in ${directories[@]}; do
     if [[ -d "$d" ]]; then
