@@ -473,6 +473,57 @@ start_vm() {
 	_info "Connect to virtual machine with: '${connect_cmd}'"
 }
 
+main() {
+	# Directories for the operation of this script
+	SERIES_DIR="${SCRIPT_DIR}/images/${VM_SERIES}"
+	DOWNLOAD_DIR="${SERIES_DIR}/downloads"
+	RUNTIME_VM_DIR="${RUNTIME_DIR}/${VM_HOSTNAME}"
+	VM_DIR="${SCRIPT_DIR}/vm/${VM_HOSTNAME}"
+
+	# Filenames for cloud image artefacts
+	CI_ROOTFS_FILE="${VM_SERIES}-server-cloudimg-amd64-root.tar.xz"
+	CI_KERNEL_FILE="${VM_SERIES}-server-cloudimg-amd64-vmlinuz-generic"
+	CI_INITRD_FILE="${VM_SERIES}-server-cloudimg-amd64-initrd-generic"
+
+	# Filenames for other artefacts
+	SERIES_ROOTFS_FILE="${SERIES_DIR}/rootfs.${VM_SERIES}"
+	SERIES_KERNEL_FILE="${SERIES_DIR}/kernel.${VM_SERIES}"
+	SERIES_INITRD_FILE="${SERIES_DIR}/initrd.${VM_SERIES}"
+
+	# Filenames for VM artefacts
+	VM_ROOTFS_FILE="${VM_DIR}/disk.ext4"
+	VM_KERNEL_FILE="${VM_DIR}/vmlinux"
+	VM_INITRD_FILE="${VM_DIR}/initrd"
+
+	# Name of the bridge interface on the host
+	BRIDGE_IFACE="embr0"
+	# Network interfaces for VM
+	TAP_IFACE_MAIN=""
+	TAP_IFACE_META=""
+	# MAC addresses of tap interfaces on host
+	TAP_IFACE_META_MAC=""
+	TAP_IFACE_MAIN_MAC=""
+	# MAC addresses of interfaces on the guest
+	TAP_IFACE_META_MAC_INT=""
+	TAP_IFACE_MAIN_MAC_INT=""
+
+	# Filenames for firecracker
+	FIRECRACKER_SOCKET="${RUNTIME_VM_DIR}/firecracker.socket"
+	FIRECRACKER_LOG="${RUNTIME_VM_DIR}/firecracker.log"
+	FIRECRACKER_CONSOLE_LOG="${RUNTIME_VM_DIR}/firecracker.console.log"
+	FIRECRACKER_PID="${RUNTIME_VM_DIR}/firecracker.pid"
+
+	check_dependencies
+	fetch_cloud_image_artefacts
+	process_cloud_image_artefacts
+	setup_network_bridge
+	start_dnsmasq
+	create_vm
+	start_firecracker
+	configure_vm
+	start_vm
+}
+
 usage() {
 	cat <<EOF
 embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
@@ -489,6 +540,7 @@ SUBCOMMANDS:
 EOF
 
 }
+
 usage_launch() {
 	cat <<EOF
 embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
@@ -525,6 +577,7 @@ OPTIONS:
 		Display this help message.
 EOF
 }
+
 usage_clean() {
 	cat <<EOF
 embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
@@ -541,7 +594,7 @@ OPTIONS:
 EOF
 }
 
-main() {
+entrypoint() {
 	local subcommand
 	subcommand="${1:-}"
 
@@ -589,55 +642,7 @@ main() {
 					;;
 			esac
 		done
-
-		# Directories for the operation of this script
-		SERIES_DIR="${SCRIPT_DIR}/images/${VM_SERIES}"
-		DOWNLOAD_DIR="${SERIES_DIR}/downloads"
-		RUNTIME_VM_DIR="${RUNTIME_DIR}/${VM_HOSTNAME}"
-		VM_DIR="${SCRIPT_DIR}/vm/${VM_HOSTNAME}"
-
-		# Filenames for cloud image artefacts
-		CI_ROOTFS_FILE="${VM_SERIES}-server-cloudimg-amd64-root.tar.xz"
-		CI_KERNEL_FILE="${VM_SERIES}-server-cloudimg-amd64-vmlinuz-generic"
-		CI_INITRD_FILE="${VM_SERIES}-server-cloudimg-amd64-initrd-generic"
-
-		# Filenames for other artefacts
-		SERIES_ROOTFS_FILE="${SERIES_DIR}/rootfs.${VM_SERIES}"
-		SERIES_KERNEL_FILE="${SERIES_DIR}/kernel.${VM_SERIES}"
-		SERIES_INITRD_FILE="${SERIES_DIR}/initrd.${VM_SERIES}"
-
-		# Filenames for VM artefacts
-		VM_ROOTFS_FILE="${VM_DIR}/disk.ext4"
-		VM_KERNEL_FILE="${VM_DIR}/vmlinux"
-		VM_INITRD_FILE="${VM_DIR}/initrd"
-
-		# Name of the bridge interface on the host
-		BRIDGE_IFACE="embr0"
-		# Network interfaces for VM
-		TAP_IFACE_MAIN=""
-		TAP_IFACE_META=""
-		# MAC addresses of tap interfaces on host
-		TAP_IFACE_META_MAC=""
-		TAP_IFACE_MAIN_MAC=""
-		# MAC addresses of interfaces on the guest
-		TAP_IFACE_META_MAC_INT=""
-		TAP_IFACE_MAIN_MAC_INT=""
-
-		# Filenames for firecracker
-		FIRECRACKER_SOCKET="${RUNTIME_VM_DIR}/firecracker.socket"
-		FIRECRACKER_LOG="${RUNTIME_VM_DIR}/firecracker.log"
-		FIRECRACKER_CONSOLE_LOG="${RUNTIME_VM_DIR}/firecracker.console.log"
-		FIRECRACKER_PID="${RUNTIME_VM_DIR}/firecracker.pid"
-
-		check_dependencies
-		fetch_cloud_image_artefacts
-		process_cloud_image_artefacts
-		setup_network_bridge
-		start_dnsmasq
-		create_vm
-		start_firecracker
-		configure_vm
-		start_vm
+		main
 	elif [[ "$subcommand" == "clean" ]]; then
 		VALID_ARGS=$(getopt -o ph --long purge,help -- "$@")
 		if [[ $? -ne 0 ]]; then _error "Could not parse arguments"; fi
@@ -660,4 +665,4 @@ main() {
 		cleanup
 	fi
 }
-main "$@"
+entrypoint "$@"
