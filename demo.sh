@@ -75,13 +75,14 @@ _firecracker_api_call() {
 	local method endpoint data
 	method="$1"
 	endpoint="$2"
-	data="$3"
+	data="${3:-}"
 
 	curl --unix-socket "$FIRECRACKER_SOCKET" \
+		-s \
 		-H "Accept: application/json" \
 		-H "Content-Type: application/json" \
-		-X "$method" "http://localhost/$endpoint" \
-		-d "$data"
+		-d "$data" \
+		-X "$method" "http://localhost/$endpoint"
 	
 	_debug "Firecracker API request complete: $method $endpoint:\n$data"
 }
@@ -405,15 +406,7 @@ configure_vm() {
 	if [[ -f "$USERDATA_FILE" ]]; then
 		data="$(cat "$USERDATA_FILE" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 		_firecracker_api_call PATCH "mmds" "$data"
-
-		# Grab the username from the user data if there is one
-		if grep -q "users:" "$USERDATA_FILE"; then
-			VM_SSH_USER="$(cat "$USERDATA_FILE" | yq '.users[0].name')"
-			# We can't guess the private key path if the user sets an authorized key to use
-			VM_SSH_KEY=""
-		fi
 	else
-		_info "Generating an SSH key for the VM"
 		# Generate an ssh-key for use with the VM
 		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_25519"
 		# Update the userdata template with the new key
@@ -421,30 +414,40 @@ configure_vm() {
 		# Configure firecracker with the vendor data
 		data="$(echo "$userdata" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 		_firecracker_api_call PATCH "mmds" "$data"
-
-		# Grab the username from the vendor data
-		VM_SSH_USER="$(echo "$userdata" | yq '.users[0].name')"
-		VM_SSH_KEY="${VM_DIR}/id_25519"
 	fi
+}
 
+start_vm() {
 	# Start the VM
 	_info "Starting VM"
 	_firecracker_api_call PUT "actions" "{\"action_type\": \"InstanceStart\"}"
 
-	# Wait for the DHCP lease to show up
-	_info "Waiting for VM to get a DHCP lease..."
+	_info "Waiting for VM to get a DHCP lease"
 	while ! grep -q "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases"; do sleep 0.5s; done
 	# Grab the IP that's assigned to MAC of the interface attached to this VM
-	VM_SSH_IP="$(grep ${TAP_IFACE_MAIN_MAC} ${RUNTIME_DIR}/dnsmasq/leases | cut -d' ' -f3)"
+	VM_SSH_IP="$(grep "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases" | cut -d' ' -f3)"
+
+	# Figure out the ssh user and key
+	# TODO(jnsgruk): make this a little less naive. 
+	if [[ ! -f "${USERDATA_FILE}" ]]; then
+		# If there is no user data file, then fallback to the defaults
+		VM_SSH_USER="ubuntu"
+		VM_SSH_KEY="${VM_DIR}/id_25519"
+	else
+		# Query the user data from the MMDS to get the first specified user
+		userdata="$(_firecracker_api_call GET "mmds" | jq -r '.latest."user-data"')"
+		if echo "$userdata" | grep -q "users:"; then
+			VM_SSH_USER="$(echo "$userdata" | yq '.users[0].name')"
+		fi
+	fi
 
 	# Build a connection command from the info we know about the VM config
-	connect_cmd="ssh"
-	if [[ -n "$VM_SSH_KEY" ]]; then 
-		connect_cmd="${connect_cmd} -i ${VM_SSH_KEY}" 
-	fi
-	connect_cmd="${connect_cmd} ${VM_SSH_USER}@${VM_SSH_IP}"
+	connect_cmd="ssh "
+	[[ -n "${VM_SSH_KEY:-}" ]] && connect_cmd="${connect_cmd}-i ${VM_SSH_KEY} "
+	[[ -n "${VM_SSH_USER:-}" ]] && connect_cmd="${connect_cmd}${VM_SSH_USER}@"
+	connect_cmd="${connect_cmd}${VM_SSH_IP}"
 	
-	_info "Waiting for SSH server to become available..."
+	_info "Waiting for SSH server to become available"
 	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 0.5s; done
 
 	_info "Connect to virtual machine with \`${connect_cmd}\`"
@@ -459,6 +462,7 @@ main() {
 	create_vm
 	start_firecracker
 	configure_vm
+	start_vm
 }
 
 main

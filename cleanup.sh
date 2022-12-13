@@ -3,7 +3,7 @@ set -euo pipefail
 # Enable command logging if TRACE variable is set
 [[ -z "${TRACE:-}" ]] || set -x
 # Helper methods for pretty output
-_info() { echo -e "\e[92m[INFO]\t${1:-}\e[0m"; }
+_info() { echo -e "\e[92m[INFO] ${1:-}\e[0m"; }
 
 if [[ -e "$XDG_RUNTIME_DIR/firecracker/dnsmasq/pid" ]]; then
     pid="$(cat $XDG_RUNTIME_DIR/firecracker/dnsmasq/pid)"
