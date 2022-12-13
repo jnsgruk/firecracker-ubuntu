@@ -8,49 +8,16 @@ _warn() { echo -e "\e[33m[WARN] ${1:-}\e[0m"; }
 _error() { echo -e >&2 "\e[31m[ERROR] ${1:-}\e[0m"; exit 1; }
 _debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e >&2 "[DEBG] ${1:-}"; fi; }
 
-# shellcheck source=default.conf
-source "${FC_CONFIG:-default.conf}"
-
-# Directories for the operation of this script
-SERIES_DIR="$(pwd)/images/${FC_SERIES}"
-DOWNLOAD_DIR="${SERIES_DIR}/downloads"
+SCRIPT_DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 RUNTIME_DIR="${XDG_RUNTIME_DIR}/firecracker"
-RUNTIME_VM_DIR="${RUNTIME_DIR}/${FC_HOSTNAME}"
-VM_DIR="$(pwd)/vm/${FC_HOSTNAME}"
 
-# Configuration files
-USERDATA_FILE="$(pwd)/userdata.yaml"
-
-# Filenames for cloud image artefacts
-CI_ROOTFS_FILE="${FC_SERIES}-server-cloudimg-amd64-root.tar.xz"
-CI_KERNEL_FILE="${FC_SERIES}-server-cloudimg-amd64-vmlinuz-generic"
-CI_INITRD_FILE="${FC_SERIES}-server-cloudimg-amd64-initrd-generic"
-
-# Filenames for other artefacts
-SERIES_ROOTFS_FILE="${SERIES_DIR}/rootfs.${FC_SERIES}"
-SERIES_KERNEL_FILE="${SERIES_DIR}/kernel.${FC_SERIES}"
-SERIES_INITRD_FILE="${SERIES_DIR}/initrd.${FC_SERIES}"
-
-# Filenames for VM artefacts
-VM_ROOTFS_FILE="${VM_DIR}/disk.ext4"
-VM_KERNEL_FILE="${VM_DIR}/vmlinux"
-VM_INITRD_FILE="${VM_DIR}/initrd"
-
-# Network interfaces for VM
-TAP_IFACE_MAIN=""
-TAP_IFACE_META=""
-# MAC addresses of tap interfaces on host
-TAP_IFACE_META_MAC=""
-TAP_IFACE_MAIN_MAC=""
-# MAC addresses of interfaces on the guest
-TAP_IFACE_META_MAC_INT=""
-TAP_IFACE_MAIN_MAC_INT=""
-
-# Filenames for firecracker
-FIRECRACKER_SOCKET="${RUNTIME_VM_DIR}/firecracker.socket"
-FIRECRACKER_LOG="${RUNTIME_VM_DIR}/firecracker.log"
-FIRECRACKER_CONSOLE_LOG="${RUNTIME_VM_DIR}/firecracker.console.log"
-FIRECRACKER_PID="${RUNTIME_VM_DIR}/firecracker.pid"
+# VM Configuration
+VM_CPUS="${VM_CPUS:-8}"
+VM_MEMORY="${VM_MEMORY:-16}"
+VM_DISK="${VM_DISK:-20}"
+VM_HOSTNAME="${VM_HOSTNAME:-dev}"
+VM_SERIES="${VM_SERIES:-jammy}"
+VM_USERDATA="${SCRIPT_DIR}/userdata.yaml"
 
 read -r -d '' USERDATA_TEMPLATE <<-EOF || true
 #cloud-config
@@ -97,6 +64,51 @@ _firecracker_api_call() {
 	_debug "Firecracker API request complete: $method $endpoint:\n$data"
 }
 
+cleanup() {
+	# Kill any dnsmasq processes started by the script
+	if [[ -e "${RUNTIME_DIR}/dnsmasq/pid" ]]; then
+		pid="$(cat ${RUNTIME_DIR}/dnsmasq/pid)"
+		if [[ -d "/proc/${pid}" ]]; then
+			sudo kill -9 "$pid"
+			_info "Killed: dnsmasq (PID $pid)"
+		fi
+	fi
+
+	# Kill each of the firecracker processes that are started
+	if [[ -n "${PURGE:-}" ]]; then
+		if pidof -q firecracker; then 
+			sudo killall firecracker
+		fi
+	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
+		for d in "$(ls ${SCRIPT_DIR}/vm)"; do
+			pid="$(cat ${RUNTIME_DIR}/${d}/firecracker.pid)"
+			if [[ -d "/proc/${pid}" ]]; then
+				sudo kill -9 "$pid"
+				_info "Killed: firecracker (PID $pid)"
+			fi
+		done
+	fi
+
+	# Clean up network interfaces that are created by the script
+	for iface in $(\ip --brief link | grep -Po "embrtap0[^ ]+|embr[^ ]+"); do 
+		sudo ip l del $iface;
+		_info "Deleted interface: $iface"
+	done;
+
+	# Directories to delete
+	directories=("${SCRIPT_DIR}/vm" "${RUNTIME_DIR}")
+
+	# If the PURGE variable is set, then delete downloaded images too
+	[[ -n "${PURGE:-}" ]] && directories+=("${SCRIPT_DIR}/images")
+
+	for d in ${directories[@]}; do
+		if [[ -d "$d" ]]; then
+			rm -rf "$d"
+			_info "Deleted directory: $d"
+		fi
+	done
+}
+
 check_dependencies() {
 	# Ensure we have all the dependenices we need to run this demo
 	deps=(firecracker yq jq dnsmasq)
@@ -111,7 +123,7 @@ fetch_cloud_image_artefacts() {
 	# This function handles downloading the relevant kernel, initrd and rootfs
 	mkdir -p "$DOWNLOAD_DIR"
 	local base_url
-	base_url="https://cloud-images.ubuntu.com/${FC_SERIES}/current"
+	base_url="https://cloud-images.ubuntu.com/${VM_SERIES}/current"
 
 	# Download the rootfs if it doesn't exist
 	_download "${base_url}/${CI_ROOTFS_FILE}" "${DOWNLOAD_DIR}/${CI_ROOTFS_FILE}"
@@ -125,7 +137,7 @@ process_cloud_image_artefacts() {
 	local tmpdir sdnd_override_dir
 	# Check the disk image we generate is there; if not generate it
 	if [[ ! -f "${SERIES_ROOTFS_FILE}" ]]; then
-		_info "Generating disk image for series '${FC_SERIES}'"
+		_info "Generating disk image for series '${VM_SERIES}'"
 		
 		# Create a new rootfs file
 		truncate -s "2G" "$SERIES_ROOTFS_FILE"
@@ -156,7 +168,7 @@ process_cloud_image_artefacts() {
 
 	# Extract the vmlinux from the kernel image
 	if [[ ! -f "${SERIES_KERNEL_FILE}" ]]; then
-		_info "Extracting kernel image for series '${FC_SERIES}'"
+		_info "Extracting kernel image for series '${VM_SERIES}'"
 		tmpdir="$(mktemp -d)"
 		_debug "Downloading 'extract-vmlinux' script from Github"
 		_download "https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux" "${tmpdir}/extract-vmlinux"
@@ -168,7 +180,7 @@ process_cloud_image_artefacts() {
 
 	# Copy the initrd into the series folder
 	if [[ ! -f "${SERIES_INITRD_FILE}" ]]; then
-		_info "Copying initrd file for '${FC_SERIES}'"
+		_info "Copying initrd file for '${VM_SERIES}'"
 		cp "${DOWNLOAD_DIR}/${CI_INITRD_FILE}" "${SERIES_INITRD_FILE}"
 	else
 		_debug "File '${SERIES_INITRD_FILE}' already exists; skipping copy"
@@ -181,19 +193,19 @@ setup_network_bridge() {
 	default_interface="$(\ip route get 1.1.1.1 | grep uid | sed "s/.* dev \([^ ]*\) .*/\1/")"
 
 	# If there is no bridge interface, create one
-	if ! ip l | grep -q "$FC_BRIDGE_IFACE"; then
+	if ! ip l | grep -q "$BRIDGE_IFACE"; then
 		# Create the interface, give it an address and bring it up
-		sudo ip link add name "$FC_BRIDGE_IFACE" type bridge
-		sudo ip addr add 172.20.0.1/24 dev "$FC_BRIDGE_IFACE"
-		sudo ip link set "$FC_BRIDGE_IFACE" up
+		sudo ip link add name "$BRIDGE_IFACE" type bridge
+		sudo ip addr add 172.20.0.1/24 dev "$BRIDGE_IFACE"
+		sudo ip link set "$BRIDGE_IFACE" up
 		# Setup the iptables and packet forwarding rules
 		sudo sysctl -w net.ipv4.ip_forward=1 &> /dev/null
 		sudo iptables -t nat -A POSTROUTING -o "$default_interface" -j MASQUERADE
-		sudo iptables -I FORWARD -i "$FC_BRIDGE_IFACE" -j ACCEPT
+		sudo iptables -I FORWARD -i "$BRIDGE_IFACE" -j ACCEPT
 		sudo iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-		_info "Created bridge interface '${FC_BRIDGE_IFACE}'"
+		_info "Created bridge interface '${BRIDGE_IFACE}'"
 	else
-		_debug "Bridge interface '${FC_BRIDGE_IFACE}' already exists"
+		_debug "Bridge interface '${BRIDGE_IFACE}' already exists"
 	fi
 }
 
@@ -222,7 +234,7 @@ start_dnsmasq() {
 		--domain="firecracker" \
 		--local="/firecracker/" \
 		--except-interface="lo" \
-		--interface="$FC_BRIDGE_IFACE" \
+		--interface="$BRIDGE_IFACE" \
 		--listen-address="172.20.0.1" \
 		--dhcp-no-override \
 		--dhcp-authoritative \
@@ -236,13 +248,13 @@ create_vm() {
 	mkdir -p "$VM_DIR"
 
 	if [[ ! -f "$VM_ROOTFS_FILE" ]]; then
-		_debug "Creating and resizing disk image '${VM_ROOTFS_FILE}' to '${FC_DISK}'"
+		_debug "Creating and resizing disk image '${VM_ROOTFS_FILE}' to '${VM_DISK}G'"
 		# If there is no vm directory, create one and move the built kernel image and rootfs
 		# into the directory before we try to boot it
 		# Copy the series rootfs into the VM directory
 		cp "$SERIES_ROOTFS_FILE" "$VM_ROOTFS_FILE"
 		# Resize image to specified size
-		truncate -s "$FC_DISK" "$VM_ROOTFS_FILE"
+		truncate -s "${VM_DISK}G" "$VM_ROOTFS_FILE"
 		resize2fs "$VM_ROOTFS_FILE" >/dev/null 2>&1 || e2fsck -fpy "$VM_ROOTFS_FILE" >/dev/null 2>&1
 	else
 		_debug "VM disk image '${VM_ROOTFS_FILE}' already exists; skipping creation"
@@ -264,8 +276,8 @@ create_vm() {
 	fi
 
 	# Generate a name for the tap interfaces
-	TAP_IFACE_MAIN="fctap0$(openssl rand -hex 2)"
-	TAP_IFACE_META="fctap0$(openssl rand -hex 2)"
+	TAP_IFACE_MAIN="embrtap0$(openssl rand -hex 2)"
+	TAP_IFACE_META="embrtap0$(openssl rand -hex 2)"
 
 	# Create the main network interface for the VM
 	if ! ip l | grep -q "$TAP_IFACE_MAIN"; then
@@ -277,8 +289,8 @@ create_vm() {
 		sudo ip link set "$TAP_IFACE_MAIN" up
 		_debug "Set interface '${TAP_IFACE_MAIN}' up"
 		
-		sudo ip link set "$TAP_IFACE_MAIN" master "$FC_BRIDGE_IFACE"
-		_info "Added tap interface '${TAP_IFACE_MAIN}' to bridge '${FC_BRIDGE_IFACE}'"
+		sudo ip link set "$TAP_IFACE_MAIN" master "$BRIDGE_IFACE"
+		_info "Added tap interface '${TAP_IFACE_MAIN}' to bridge '${BRIDGE_IFACE}'"
 	fi
 
 	# Create a network interface for the MMDS
@@ -294,10 +306,10 @@ create_vm() {
 
 	cat <<-EOF | jq > "$VM_DIR/vm.json"
 	{
-		"name": "$FC_HOSTNAME",
+		"name": "$VM_HOSTNAME",
 		"specs": {
-			"vcpu_count": $FC_CPUS,
-			"mem_size_mib": $FC_MEMORY
+			"vcpu_count": $VM_CPUS,
+			"mem_size_mib": $(( 1024 * "$VM_MEMORY" ))
 		},
 		"interfaces": [
 			{
@@ -404,7 +416,7 @@ configure_vm() {
 	# Set some metadata on the MMDS
 	read -r -d '' metadata <<-EOF || true
 	{
-		"local-hostname": "${FC_HOSTNAME}"
+		"local-hostname": "${VM_HOSTNAME}"
 	}
 	EOF
 
@@ -412,8 +424,8 @@ configure_vm() {
 	_firecracker_api_call PUT "mmds" "$data"
 
 	# If there is a provided userdata file, then use it; otherwise generate one
-	if [[ -f "$USERDATA_FILE" ]]; then
-		data="$(cat "$USERDATA_FILE" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
+	if [[ -f "$VM_USERDATA" ]]; then
+		data="$(cat "$VM_USERDATA" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 		_firecracker_api_call PATCH "mmds" "$data"
 	else
 		# Generate an ssh-key for use with the VM
@@ -437,7 +449,7 @@ start_vm() {
 
 	# Figure out the ssh user and key
 	# TODO(jnsgruk): make this a little less naive. 
-	if [[ ! -f "${USERDATA_FILE}" ]]; then
+	if [[ ! -f "${VM_USERDATA}" ]]; then
 		# If there is no user data file, then fallback to the defaults
 		VM_SSH_USER="ubuntu"
 		VM_SSH_KEY="${VM_DIR}/id_25519"
@@ -461,16 +473,191 @@ start_vm() {
 	_info "Connect to virtual machine with: '${connect_cmd}'"
 }
 
-main() {
-	check_dependencies
-	fetch_cloud_image_artefacts
-	process_cloud_image_artefacts
-	setup_network_bridge
-	start_dnsmasq
-	create_vm
-	start_firecracker
-	configure_vm
-	start_vm
+usage() {
+	cat <<EOF
+embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
+
+USAGE:
+	embr <SUBCOMMAND> [OPTIONS]
+
+SUBCOMMANDS:
+	launch
+		Launches a new or existing firecracker virtual machine
+	
+	clean
+		Kills processes, removes files and removes network interfaces created by embr.
+EOF
+
+}
+usage_launch() {
+	cat <<EOF
+embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
+
+USAGE:
+	embr launch [OPTIONS]
+
+OPTIONS:
+	-n, --name <name>
+		Hostname of the virtual machine to create.
+		Default: dev
+
+	-c, --cpus <cpus>
+		Number of virtual CPUs to assign to the VM
+		Default: 8
+
+	-m, --memory <mem>
+		Amount of memory in GB to assign to the VM.
+		Default: 16
+
+	-d, --disk <disk>
+		Size of disk for the VM in GB.
+		Default: 20
+
+	-f, --cloud-init <file>
+		Filename of the cloud-init user data file to use for provisioning.
+		Default: userdata.yaml
+
+	-s, --series <series>
+		The Ubuntu series codename to use. E.g. xenial, bionic, focal, jammy
+		Default: jammy
+
+	-h, --help
+		Display this help message.
+EOF
+}
+usage_clean() {
+	cat <<EOF
+embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
+
+USAGE:
+	embr clean [OPTIONS]
+
+OPTIONS:
+	-p, --purge
+		Run usual cleanup, but also delete any downloaded cloud images, kernels, etc.
+
+	-h, --help
+		Display this help message.
+EOF
 }
 
-main
+main() {
+	local subcommand
+	subcommand="${1:-}"
+
+	if [[ ! "$subcommand" =~ "launch"|"clean" ]]; then usage; fi
+
+	if [[ "$subcommand" == "launch" ]]; then
+		VALID_ARGS=$(getopt -o n:c:m:d:f:s:h --long name:,cpus:,memory:,disk:,cloud-init:,series:,help -- "$@")
+		if [[ $? -ne 0 ]]; then
+			exit 1;
+		fi
+
+		eval set -- "$VALID_ARGS"
+		while [ : ]; do
+			case "$1" in
+				-n | --name)
+					export VM_HOSTNAME="$2"
+					shift 2
+					;;
+				-c | --cpus)
+					export VM_CPUS="$2"
+					shift 2
+					;;
+				-m | --memory)
+					export VM_MEMORY="$2"
+					shift 2
+					;;
+				-d | --disk)
+					export VM_DISK="$2"
+					shift 2
+					;;
+				-f | --cloud-init)
+					export VM_USERDATA="$2"
+					shift 2
+					;;
+				-s | --series)
+					export VM_SERIES="$2"
+					shift 2
+					;;
+				-h | --help)
+					usage_launch
+					exit 0
+					;;
+				--) shift; 
+					break 
+					;;
+			esac
+		done
+
+		# Directories for the operation of this script
+		SERIES_DIR="${SCRIPT_DIR}/images/${VM_SERIES}"
+		DOWNLOAD_DIR="${SERIES_DIR}/downloads"
+		RUNTIME_VM_DIR="${RUNTIME_DIR}/${VM_HOSTNAME}"
+		VM_DIR="${SCRIPT_DIR}/vm/${VM_HOSTNAME}"
+
+		# Filenames for cloud image artefacts
+		CI_ROOTFS_FILE="${VM_SERIES}-server-cloudimg-amd64-root.tar.xz"
+		CI_KERNEL_FILE="${VM_SERIES}-server-cloudimg-amd64-vmlinuz-generic"
+		CI_INITRD_FILE="${VM_SERIES}-server-cloudimg-amd64-initrd-generic"
+
+		# Filenames for other artefacts
+		SERIES_ROOTFS_FILE="${SERIES_DIR}/rootfs.${VM_SERIES}"
+		SERIES_KERNEL_FILE="${SERIES_DIR}/kernel.${VM_SERIES}"
+		SERIES_INITRD_FILE="${SERIES_DIR}/initrd.${VM_SERIES}"
+
+		# Filenames for VM artefacts
+		VM_ROOTFS_FILE="${VM_DIR}/disk.ext4"
+		VM_KERNEL_FILE="${VM_DIR}/vmlinux"
+		VM_INITRD_FILE="${VM_DIR}/initrd"
+
+		# Name of the bridge interface on the host
+		BRIDGE_IFACE="embr0"
+		# Network interfaces for VM
+		TAP_IFACE_MAIN=""
+		TAP_IFACE_META=""
+		# MAC addresses of tap interfaces on host
+		TAP_IFACE_META_MAC=""
+		TAP_IFACE_MAIN_MAC=""
+		# MAC addresses of interfaces on the guest
+		TAP_IFACE_META_MAC_INT=""
+		TAP_IFACE_MAIN_MAC_INT=""
+
+		# Filenames for firecracker
+		FIRECRACKER_SOCKET="${RUNTIME_VM_DIR}/firecracker.socket"
+		FIRECRACKER_LOG="${RUNTIME_VM_DIR}/firecracker.log"
+		FIRECRACKER_CONSOLE_LOG="${RUNTIME_VM_DIR}/firecracker.console.log"
+		FIRECRACKER_PID="${RUNTIME_VM_DIR}/firecracker.pid"
+
+		check_dependencies
+		fetch_cloud_image_artefacts
+		process_cloud_image_artefacts
+		setup_network_bridge
+		start_dnsmasq
+		create_vm
+		start_firecracker
+		configure_vm
+		start_vm
+	elif [[ "$subcommand" == "clean" ]]; then
+		VALID_ARGS=$(getopt -o ph --long purge,help -- "$@")
+		if [[ $? -ne 0 ]]; then _error "Could not parse arguments"; fi
+		eval set -- "$VALID_ARGS"
+		while [ : ]; do
+			case "$1" in
+				-p | --purge)
+					export PURGE=1
+					shift
+					;;
+				-h | --help)
+					usage_clean
+					exit 0
+					;;
+				--) shift; 
+					break 
+					;;
+			esac
+		done
+		cleanup
+	fi
+}
+main "$@"

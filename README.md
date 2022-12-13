@@ -1,10 +1,10 @@
-# Ubuntu on Firecracker
+# embr
 
 The purpose of this project was to explore running Ubuntu with [Firecracker] as a general purpose
 development machine. This is obviously not what Firecracker was developed for, but it was an
 opportunity to learn a little about it!
 
-At present, this project can download and start Ubuntu cloud images using firecracker, with support
+At present, `embr` can download and start Ubuntu cloud images using firecracker, with support
 for supplying a cloud-init file to customise the virtual machine. It relies upon [dnsmasq] to
 dynamically address the VM it creates.
 
@@ -27,12 +27,12 @@ Before you can use or test this project, you'll need the following installed on 
 
 ## Quick start
 
-You can start the project on a clean machine with `./demo.sh`. You might want to adjust the
+You can start the project on a clean machine with `./embr launch`. You might want to adjust the
 [userdata.yaml] before starting it to ensure the right SSH key is present.
 
 This will do the following:
 
-- Download and process the relevant Ubuntu cloud image (according to `FC_SERIES`)
+- Download and process the relevant Ubuntu cloud image (latest LTS by default)
 - Create a network bridge device
 - Start `dnsmasq` on that bridge
 - Create two tap network interfaces for the VM (one for the metadata service, one for normal use)
@@ -40,33 +40,66 @@ This will do the following:
 - Start firecracker and configure the VM over it's HTTP API
 - Start the VM
 
-By default, the [config] looks like so:
+With no arguments, `embr` will create a VM with 8 CPUs, 16GB RAM and a 20GB disk.
 
-```bash
-# Some configuration for the VM
-FC_CPUS="${FC_CPUS:-8}"
-FC_MEMORY="${FC_MEMORY:-16386}" # 16GB
-FC_DISK="${FC_DISK:-20G}"
-FC_HOSTNAME="${FC_HOSTNAME:-dev}"
+Once you've run `./embr launch`, you'll get instructions on how to connect to your VM.
 
-# Which series of Ubuntu to boot
-FC_SERIES="${FC_SERIES:-jammy}"
+To cleanup your machine, run `./embr clean`. Note that this will, kill started processes, remove
+any network interfaces and delete the VM.
 
-# Name of the bridge interface
-FC_BRIDGE_IFACE="fcbr0"
+## Customising your machine
+
+The `embr launch` command takes a number of arguments such that you can customise the CPUS, memory,
+disk and series that is used:
+
 ```
+$ ./embr launch --help
+embr is a tool for creating and launching Ubuntu virtual machines with Firecracker.
 
-Once you've run `./demo.sh`, you'll get instructions on how to connect to your VM.
+USAGE:
+        embr launch [OPTIONS]
 
-To cleanup your machine, run `./cleanup.sh`. Note that this will delete all downloaded artefacts,
-kill started processes, remove any network interfaces and delete the VM.
+OPTIONS:
+        -n, --name <name>
+                Hostname of the virtual machine to create.
+                Default: dev
+
+        -c, --cpus <cpus>
+                Number of virtual CPUs to assign to the VM
+                Default: 8
+
+        -m, --memory <mem>
+                Amount of memory in GB to assign to the VM.
+                Default: 16
+
+        -d, --disk <disk>
+                Size of disk for the VM in GB.
+                Default: 20
+
+        -f, --cloud-init <file>
+                Filename of the cloud-init user data file to use for provisioning.
+                Default: userdata.yaml
+
+        -s, --series <series>
+                The Ubuntu series codename to use. E.g. xenial, bionic, focal, jammy
+                Default: jammy
+
+        -h, --help
+                Display this help message.
+```
 
 ## TODO
 
 - [ ] Resume VM and make sure existing interfaces are present
 - [ ] Multiple VM support
-- [ ] Better command line arg experience
+  - [x] Store VMs in separate directories
+  - [ ] Start / stop VMs independently
+  - [ ] Status command to show running, IP, etc.
+- [ ] Stop being a maniac and write this in Go
 
+### Done
+
+- [x] Better command line arg experience
 - [x] Output an accurate message with connection instructions on boot
 - [x] Figure out how to run DHCP on a tap interface
 - [x] Enable the use of standard Ubuntu cloud images

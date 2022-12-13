@@ -3,11 +3,4 @@ custom-image/build/
 custom-image/vm
 images/
 
-dnsmasq.leases
-dnsmasq.hosts
-dnsmasq.conf
-dnsmasq.pid
-dnsmasq.log
-
-custom.conf
-_userdata.yaml
+custom.yaml
