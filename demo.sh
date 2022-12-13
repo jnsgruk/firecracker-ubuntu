@@ -3,10 +3,10 @@ set -euo pipefail
 # Enable command logging if TRACE variable is set
 [[ -z "${TRACE:-}" ]] || set -x
 # Helper methods for pretty output
-_info() { echo -e "\e[92m[INFO]\t${1:-}\e[0m"; }
-_warn() { echo -e "\e[33m[WARN]\t${1:-}\e[0m"; }
-_error() { echo -e >&2 "\e[31m[ERROR]\t${1:-}\e[0m"; exit 1; }
-_debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e >&2 "[DEBG]\t${1:-}"; fi; }
+_info() { echo -e "\e[92m[INFO] ${1:-}\e[0m"; }
+_warn() { echo -e "\e[33m[WARN] ${1:-}\e[0m"; }
+_error() { echo -e >&2 "\e[31m[ERROR] ${1:-}\e[0m"; exit 1; }
+_debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e >&2 "[DEBG] ${1:-}"; fi; }
 
 # shellcheck source=default.conf
 source "${FC_CONFIG:-default.conf}"
@@ -192,8 +192,8 @@ start_dnsmasq() {
 	mkdir -p "${dnsmasq_dir}"
 
 	# Check if there is already a PID file for dnsmasq
-	if [[ -f "${dnsmasq_dir}/dnsmasq.pid" ]]; then
-		dnsmasq_pid="$(cat "${dnsmasq_dir}/dnsmasq.pid")"
+	if [[ -f "${dnsmasq_dir}/pid" ]]; then
+		dnsmasq_pid="$(cat "${dnsmasq_dir}/pid")"
 		# If the PID exists in /proc, assume dnsmasq is running okay and just return
 		if [[ -d "/proc/${dnsmasq_pid}" ]]; then
 			_debug "Found existing dnsmasq process; PID ${dnsmasq_pid}"
@@ -205,9 +205,9 @@ start_dnsmasq() {
 	sudo dnsmasq \
 		--strict-order \
 		--bind-interfaces \
-		--log-facility="${dnsmasq_dir}/dnsmasq.log" \
-		--pid-file="${dnsmasq_dir}/dnsmasq.pid" \
-		--dhcp-leasefile="${dnsmasq_dir}/dnsmasq.leases" \
+		--log-facility="${dnsmasq_dir}/log" \
+		--pid-file="${dnsmasq_dir}/pid" \
+		--dhcp-leasefile="${dnsmasq_dir}/leases" \
 		--domain="firecracker" \
 		--local="/firecracker/" \
 		--except-interface="lo" \
@@ -217,8 +217,8 @@ start_dnsmasq() {
 		--dhcp-authoritative \
 		--dhcp-range "172.20.0.2,172.20.0.100,infinite"
 	
-	dnsmasq_pid="$(cat "${dnsmasq_dir}/dnsmasq.pid")"
-	_info "Started dnsmasq; PID ${dnsmasq_pid}; log "${dnsmasq_dir}/dnsmasq.log""
+	dnsmasq_pid="$(cat "${dnsmasq_dir}/pid")"
+	_info "Started dnsmasq; PID ${dnsmasq_pid}; log "${dnsmasq_dir}/log""
 }
 
 create_vm() {
@@ -405,19 +405,49 @@ configure_vm() {
 	if [[ -f "$USERDATA_FILE" ]]; then
 		data="$(cat "$USERDATA_FILE" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 		_firecracker_api_call PATCH "mmds" "$data"
+
+		# Grab the username from the user data if there is one
+		if grep -q "users:" "$USERDATA_FILE"; then
+			VM_SSH_USER="$(cat "$USERDATA_FILE" | yq '.users[0].name')"
+			# We can't guess the private key path if the user sets an authorized key to use
+			VM_SSH_KEY=""
+		fi
 	else
 		_info "Generating an SSH key for the VM"
 		# Generate an ssh-key for use with the VM
-		ssh-keygen -t ed25519 -q -N "ubuntu@${FC_HOSTNAME}" -f "${VM_DIR}/id_25519"
+		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_25519"
 		# Update the userdata template with the new key
-		userdata="$(echo "$USERDATA_TEMPLATE" | sed -e "s/__KEY__/$(cat "$VM_DIR/id_25519.pub")/g")"
-		# Configure firecracker with the userdata
+		userdata="$(echo "$USERDATA_TEMPLATE" | sed -e "s|__KEY__|$(cat "${VM_DIR}/id_25519.pub")|g")"
+		# Configure firecracker with the vendor data
 		data="$(echo "$userdata" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
 		_firecracker_api_call PATCH "mmds" "$data"
+
+		# Grab the username from the vendor data
+		VM_SSH_USER="$(echo "$userdata" | yq '.users[0].name')"
+		VM_SSH_KEY="${VM_DIR}/id_25519"
 	fi
 
 	# Start the VM
+	_info "Starting VM"
 	_firecracker_api_call PUT "actions" "{\"action_type\": \"InstanceStart\"}"
+
+	# Wait for the DHCP lease to show up
+	_info "Waiting for VM to get a DHCP lease..."
+	while ! grep -q "${TAP_IFACE_MAIN_MAC}" "${RUNTIME_DIR}/dnsmasq/leases"; do sleep 0.5s; done
+	# Grab the IP that's assigned to MAC of the interface attached to this VM
+	VM_SSH_IP="$(grep ${TAP_IFACE_MAIN_MAC} ${RUNTIME_DIR}/dnsmasq/leases | cut -d' ' -f3)"
+
+	# Build a connection command from the info we know about the VM config
+	connect_cmd="ssh"
+	if [[ -n "$VM_SSH_KEY" ]]; then 
+		connect_cmd="${connect_cmd} -i ${VM_SSH_KEY}" 
+	fi
+	connect_cmd="${connect_cmd} ${VM_SSH_USER}@${VM_SSH_IP}"
+	
+	_info "Waiting for SSH server to become available..."
+	while ! nc -w1 "${VM_SSH_IP}" 22 &> /dev/null; do sleep 0.5s; done
+
+	_info "Connect to virtual machine with \`${connect_cmd}\`"
 }
 
 main() {

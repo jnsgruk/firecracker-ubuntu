@@ -63,11 +63,11 @@ kill started processes, remove any network interfaces and delete the VM.
 
 ## TODO
 
-- [ ] Output an accurate message with connection instructions on boot
 - [ ] Resume VM and make sure existing interfaces are present
 - [ ] Multiple VM support
 - [ ] Better command line arg experience
 
+- [x] Output an accurate message with connection instructions on boot
 - [x] Figure out how to run DHCP on a tap interface
 - [x] Enable the use of standard Ubuntu cloud images
 - [x] Enable cloud-init support
