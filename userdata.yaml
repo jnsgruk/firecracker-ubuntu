@@ -1,8 +1,0 @@
-#cloud-config
-users:
-  - name: ubuntu
-    shell: /bin/bash
-    groups: sudo
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMnd4bqCUEzrVkQBTVbQOKVBozJ2ZNJUFvWJFhLc7cST example

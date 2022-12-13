@@ -27,8 +27,7 @@ Before you can use or test this project, you'll need the following installed on 
 
 ## Quick start
 
-You can start the project on a clean machine with `./embr launch`. You might want to adjust the
-[userdata.yaml] before starting it to ensure the right SSH key is present.
+You can start the project on a clean machine with `./embr launch`.
 
 This will do the following:
 
