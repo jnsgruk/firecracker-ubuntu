@@ -31,7 +31,7 @@ users:
 EOF
 
 # Helper method for generating MAC octets
-_random_octet() { printf '%02x' $((1 + $RANDOM % 99)); }
+_random_octet() { printf '%02x' $((1 + RANDOM % 99)); }
 
 # Helper method for generating random MAC addresses
 _random_mac() { echo "aa:bb:00:$(_random_octet):$(_random_octet):$(_random_octet)"; }
@@ -67,7 +67,7 @@ _firecracker_api_call() {
 cleanup() {
 	# Kill any dnsmasq processes started by the script
 	if [[ -e "${RUNTIME_DIR}/dnsmasq/pid" ]]; then
-		pid="$(cat ${RUNTIME_DIR}/dnsmasq/pid)"
+		pid="$(cat "${RUNTIME_DIR}/dnsmasq/pid")"
 		if [[ -d "/proc/${pid}" ]]; then
 			sudo kill -9 "$pid"
 			_info "Killed: dnsmasq (PID $pid)"
@@ -80,8 +80,9 @@ cleanup() {
 			sudo killall firecracker
 		fi
 	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
-		for d in "$(ls ${SCRIPT_DIR}/vm)"; do
-			pid="$(cat ${RUNTIME_DIR}/${d}/firecracker.pid)"
+		for d in "${SCRIPT_DIR}"/vm/*; do
+			n="$(echo "$d" | rev | cut -d"/" -f1 | rev)"
+			pid="$(cat "${RUNTIME_DIR}/${n}/firecracker.pid")"
 			if [[ -d "/proc/${pid}" ]]; then
 				sudo kill -9 "$pid"
 				_info "Killed: firecracker (PID $pid)"
@@ -91,7 +92,7 @@ cleanup() {
 
 	# Clean up network interfaces that are created by the script
 	for iface in $(\ip --brief link | grep -Po "embrtap0[^ ]+|embr[^ ]+"); do 
-		sudo ip l del $iface;
+		sudo ip l del "$iface";
 		_info "Deleted interface: $iface"
 	done;
 
@@ -101,7 +102,7 @@ cleanup() {
 	# If the PURGE variable is set, then delete downloaded images too
 	[[ -n "${PURGE:-}" ]] && directories+=("${SCRIPT_DIR}/images")
 
-	for d in ${directories[@]}; do
+	for d in "${directories[@]}"; do
 		if [[ -d "$d" ]]; then
 			rm -rf "$d"
 			_info "Deleted directory: $d"
@@ -338,7 +339,7 @@ create_vm() {
 	}
 	EOF
 	_info "Created virtual machine"
-	_debug "Virtual machine config:\n$(cat "${VM_DIR}/vm.json" | jq)"
+	_debug "Virtual machine config:\n$(jq < "${VM_DIR}/vm.json")"
 }
 
 start_firecracker() {
@@ -407,7 +408,7 @@ configure_vm() {
 	# Add the nocloud datasource for cloud-init to the kernel command line
 	cmdline="${cmdline} ds=nocloud-net;s=http://169.254.169.254/latest/"
 	# Add the network-config to the kernel command line (gzipped and base64 encoded)
-	cmdline="${cmdline} network-config=$(echo $netconfig | yq -P . | gzip -c - | base64 -w0)"
+	cmdline="${cmdline} network-config=$(echo "$netconfig" | yq -P . | gzip -c - | base64 -w0)"
 
 	# Send the boot sources to the firecracker API
 	data="$(jq --arg c "$cmdline" '.boot_sources + {"boot_args": $c}' "$vconf")"
@@ -425,15 +426,15 @@ configure_vm() {
 
 	# If there is a provided userdata file, then use it; otherwise generate one
 	if [[ -f "$VM_USERDATA" ]]; then
-		data="$(cat "$VM_USERDATA" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
+		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' < $VM_USERDATA)"
 		_firecracker_api_call PATCH "mmds" "$data"
 	else
 		# Generate an ssh-key for use with the VM
-		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_25519"
+		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_ed25519"
 		# Update the userdata template with the new key
-		userdata="$(echo "$USERDATA_TEMPLATE" | sed -e "s|__KEY__|$(cat "${VM_DIR}/id_25519.pub")|g")"
+		userdata="${USERDATA_TEMPLATE//__KEY__/$(cat "${VM_DIR}/id_ed25519.pub")}"
 		# Configure firecracker with the vendor data
-		data="$(echo "$userdata" | jq --raw-input --slurp '{ "latest": { "user-data": . }}')"
+		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' <<<"$userdata")"
 		_firecracker_api_call PATCH "mmds" "$data"
 	fi
 }
@@ -452,7 +453,7 @@ start_vm() {
 	if [[ ! -f "${VM_USERDATA}" ]]; then
 		# If there is no user data file, then fallback to the defaults
 		VM_SSH_USER="ubuntu"
-		VM_SSH_KEY="${VM_DIR}/id_25519"
+		VM_SSH_KEY="${VM_DIR}/id_ed25519"
 	else
 		# Query the user data from the MMDS to get the first specified user
 		userdata="$(_firecracker_api_call GET "mmds" | jq -r '.latest."user-data"')"
@@ -601,13 +602,13 @@ entrypoint() {
 	if [[ ! "$subcommand" =~ "launch"|"clean" ]]; then usage; fi
 
 	if [[ "$subcommand" == "launch" ]]; then
-		VALID_ARGS=$(getopt -o n:c:m:d:f:s:h --long name:,cpus:,memory:,disk:,cloud-init:,series:,help -- "$@")
-		if [[ $? -ne 0 ]]; then
-			exit 1;
+		if ! VALID_ARGS=$(getopt -o n:c:m:d:f:s:h --long name:,cpus:,memory:,disk:,cloud-init:,series:,help -- "$@"); then
+			_error "Could not parse arguments!"
+			usage_launch
 		fi
 
 		eval set -- "$VALID_ARGS"
-		while [ : ]; do
+		while true; do
 			case "$1" in
 				-n | --name)
 					export VM_HOSTNAME="$2"
@@ -644,10 +645,13 @@ entrypoint() {
 		done
 		main
 	elif [[ "$subcommand" == "clean" ]]; then
-		VALID_ARGS=$(getopt -o ph --long purge,help -- "$@")
-		if [[ $? -ne 0 ]]; then _error "Could not parse arguments"; fi
+		if ! VALID_ARGS=$(getopt -o ph --long purge,help -- "$@"); then
+			_error "Could not parse arguments!"
+			usage_clean
+		fi
+
 		eval set -- "$VALID_ARGS"
-		while [ : ]; do
+		while true; do
 			case "$1" in
 				-p | --purge)
 					export PURGE=1
