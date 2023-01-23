@@ -121,7 +121,7 @@ cleanup() {
 
 check_dependencies() {
 	# Ensure we have all the dependenices we need to run this demo
-	deps=(firecracker yq jq dnsmasq)
+	deps=(firecracker yq jq dnsmasq openssl)
 	for d in "${deps[@]}"; do
 		if ! command -v "$d" >/dev/null; then
 			_error "Could not find '$d' in \$PATH"
