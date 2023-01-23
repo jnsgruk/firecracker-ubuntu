@@ -91,7 +91,11 @@ cleanup() {
 	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
 		for d in "${SCRIPT_DIR}"/vm/*; do
 			n="$(echo "$d" | rev | cut -d"/" -f1 | rev)"
-			pid="$(cat "${RUNTIME_DIR}/${n}/firecracker.pid")"
+			pid_file="${RUNTIME_DIR}/${n}/firecracker.pid"
+			if [[ ! -f "$pid_file" ]]; then
+				continue
+			fi
+			pid="$(cat "$pid_file")"
 			if [[ -d "/proc/${pid}" ]]; then
 				sudo kill -9 "$pid"
 				_info "Killed: firecracker (PID $pid)"
