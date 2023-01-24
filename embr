@@ -13,9 +13,8 @@ _debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e "[DEBG] ${1:-}" >&2; fi; }
 
 # Set a sensible default for XDG_RUNTIME_DIR if not set
 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/user/$(id -u)}"
-
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-RUNTIME_DIR="${XDG_RUNTIME_DIR}/firecracker"
+EMBR_DIR="${HOME}/.config/embr"
+RUNTIME_DIR="${XDG_RUNTIME_DIR}/embr"
 
 # VM Configuration
 VM_CPUS="${VM_CPUS:-8}"
@@ -23,7 +22,7 @@ VM_MEMORY="${VM_MEMORY:-16}"
 VM_DISK="${VM_DISK:-20}"
 VM_HOSTNAME="${VM_HOSTNAME:-dev}"
 VM_SERIES="${VM_SERIES:-jammy}"
-VM_USERDATA="${SCRIPT_DIR}/userdata.yaml"
+VM_USERDATA="$(pwd)/userdata.yaml"
 
 # This is a JSON representation of a cloud-init file. This is a bit of a hack, and it's
 # later turned into yaml with the correct '#cloud-config' heading using 'yq'. It's done
@@ -91,8 +90,8 @@ cleanup() {
 		if pidof -q firecracker; then
 			sudo killall firecracker
 		fi
-	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
-		for d in "${SCRIPT_DIR}"/vm/*; do
+	elif [[ -d "${EMBR_DIR}/vm" ]]; then
+		for d in "${EMBR_DIR}"/vm/*; do
 			n="$(echo "$d" | rev | cut -d"/" -f1 | rev)"
 			pid="$(cat "${RUNTIME_DIR}/${n}/firecracker.pid")"
 			if [[ -d "/proc/${pid}" ]]; then
@@ -109,10 +108,10 @@ cleanup() {
 	done
 
 	# Directories to delete
-	directories=("${SCRIPT_DIR}/vm" "${RUNTIME_DIR}")
+	directories=("${EMBR_DIR}/vm" "${RUNTIME_DIR}")
 
 	# If the PURGE variable is set, then delete downloaded images too
-	[[ -n "${PURGE:-}" ]] && directories+=("${SCRIPT_DIR}/images")
+	[[ -n "${PURGE:-}" ]] && directories+=("${EMBR_DIR}/images")
 
 	for d in "${directories[@]}"; do
 		if [[ -d "$d" ]]; then
@@ -490,10 +489,11 @@ start_vm() {
 
 main() {
 	# Directories for the operation of this script
-	SERIES_DIR="${SCRIPT_DIR}/images/${VM_SERIES}"
+	mkdir -p "$EMBR_DIR"
+	SERIES_DIR="${EMBR_DIR}/images/${VM_SERIES}"
 	DOWNLOAD_DIR="${SERIES_DIR}/downloads"
 	RUNTIME_VM_DIR="${RUNTIME_DIR}/${VM_HOSTNAME}"
-	VM_DIR="${SCRIPT_DIR}/vm/${VM_HOSTNAME}"
+	VM_DIR="${EMBR_DIR}/vm/${VM_HOSTNAME}"
 
 	# Filenames for cloud image artefacts
 	CI_ROOTFS_FILE="${VM_SERIES}-server-cloudimg-amd64-root.tar.xz"
