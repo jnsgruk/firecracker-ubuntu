@@ -123,7 +123,7 @@ cleanup() {
 
 check_dependencies() {
 	# Ensure we have all the dependenices we need to run this demo
-	deps=(firecracker yq jq dnsmasq)
+	deps=(firecracker yq jq dnsmasq openssl ssh-keygen curl readelf truncate resize2fs killall)
 	for d in "${deps[@]}"; do
 		if ! command -v "$d" >/dev/null; then
 			_error "Could not find '$d' in \$PATH"
@@ -180,12 +180,20 @@ process_cloud_image_artefacts() {
 
 	# Extract the vmlinux from the kernel image
 	if [[ ! -f "${SERIES_KERNEL_FILE}" ]]; then
+		local extractor
 		_info "Extracting kernel image for series '${VM_SERIES}'"
-		tmpdir="$(mktemp -d)"
-		_debug "Downloading 'extract-vmlinux' script from Github"
-		url="https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux"
-		_download "$url" "${tmpdir}/extract-vmlinux"
-		bash "${tmpdir}/extract-vmlinux" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" >"${SERIES_KERNEL_FILE}"
+
+		if command -v extract-vmlinux &>/dev/null; then
+			extractor="extract-vmlinux"
+		else
+			tmpdir="$(mktemp -d)"
+			_debug "Downloading 'extract-vmlinux' script from Github"
+			url="https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux"
+			_download "$url" "${tmpdir}/extract-vmlinux"
+			chmod +x "${tmpdir}/extract-vmlinux"
+			extractor="${tmpdir}/extract-vmlinux"
+		fi
+		bash "$extractor" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" >"${SERIES_KERNEL_FILE}"
 		rm -rf "$tmpdir"
 	else
 		_debug "File '${SERIES_KERNEL_FILE}' already exists; skipping generation"

@@ -13,12 +13,15 @@
         pkgs = import nixpkgs {inherit system;};
 
         deps = with pkgs; [
+          bash
+          curl
           dnsmasq
           e2fsprogs
           firecracker
           iptables
           jq
           killall
+          openssh
           openssl
           yq
           # The following are dependencies of the extract-vmlinuz script
@@ -36,12 +39,21 @@
         embr = (pkgs.writeScriptBin "embr" (builtins.readFile ./embr)).overrideAttrs (old: {
           buildCommand = "${old.buildCommand}\n patchShebangs $out";
         });
+
+        extract-vmlinux =
+          (pkgs.writeScriptBin "extract-vmlinux"
+            (builtins.readFile ./util/extract-vmlinux))
+          .overrideAttrs (
+            old: {
+              buildCommand = "${old.buildCommand}\n patchShebangs $out";
+            }
+          );
       in rec {
         defaultPackage = packages.embr;
 
         packages.embr = pkgs.symlinkJoin {
           name = "embr";
-          paths = [embr] ++ deps;
+          paths = [embr extract-vmlinux] ++ deps;
           buildInputs = [pkgs.makeWrapper];
           postBuild = "wrapProgram $out/bin/embr --prefix PATH : $out/bin";
         };
