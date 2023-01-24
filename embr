@@ -11,6 +11,9 @@ _error() {
 }
 _debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e "[DEBG] ${1:-}" >&2; fi; }
 
+# Set a sensible default for XDG_RUNTIME_DIR if not set
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/user/$(id -u)}"
+
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR="${XDG_RUNTIME_DIR}/firecracker"
 
