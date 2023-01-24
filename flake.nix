@@ -18,8 +18,19 @@
           firecracker
           iptables
           jq
+          killall
           openssl
           yq
+          # The following are dependencies of the extract-vmlinuz script
+          binutils
+          bzip2
+          gzip
+          lzip
+          lzop
+          lz4
+          zstd
+          unzip
+          xz
         ];
 
         embr = (pkgs.writeScriptBin "embr" (builtins.readFile ./embr)).overrideAttrs (old: {

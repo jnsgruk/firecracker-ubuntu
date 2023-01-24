@@ -420,7 +420,8 @@ configure_vm() {
 	# Add the nocloud datasource for cloud-init to the kernel command line
 	cmdline="${cmdline} ds=nocloud-net;s=http://169.254.169.254/latest/"
 	# Add the network-config to the kernel command line (gzipped and base64 encoded)
-	cmdline="${cmdline} network-config=$(echo "$netconfig" | yq -P . | gzip -c - | base64 -w0)"
+	compressed_netconfig="$(echo "$netconfig" | yq . | gzip -c - | base64 -w0)"
+	cmdline="${cmdline} network-config=${compressed_netconfig}"
 
 	# Send the boot sources to the firecracker API
 	data="$(jq --arg c "$cmdline" '.boot_sources + {"boot_args": $c}' "$vconf")"
@@ -433,7 +434,7 @@ configure_vm() {
 		}
 	EOF
 
-	data="$(echo "$metadata" | yq -P . | jq --raw-input --slurp '{ "latest": { "meta-data": . }}')"
+	data="$(echo "$metadata" | yq . | jq --raw-input --slurp '{ "latest": { "meta-data": . }}')"
 	_firecracker_api_call PUT "mmds" "$data"
 
 	# If there is a provided userdata file, then use it; otherwise generate one
@@ -445,7 +446,7 @@ configure_vm() {
 		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_ed25519"
 		# Update the userdata template with the new key
 		userdata="${USERDATA_TEMPLATE//__KEY__/$(cat "${VM_DIR}/id_ed25519.pub")}"
-		userdata="$(echo -e "#cloud-config\n$(echo "$userdata" | yq -P .)")"
+		userdata="$(echo -e "#cloud-config\n$(echo "$userdata" | yq .)")"
 		# Configure firecracker with the vendor data
 		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' <<<"$userdata")"
 		_firecracker_api_call PATCH "mmds" "$data"
