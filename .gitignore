@@ -3,5 +3,7 @@ custom-image/build/
 custom-image/vm
 images/
 
+result
+
 userdata.yaml
 custom.yaml

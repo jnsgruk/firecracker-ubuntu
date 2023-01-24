@@ -11,8 +11,10 @@ _error() {
 }
 _debug() { if [[ -n "${DEBUG:-}" ]]; then echo -e "[DEBG] ${1:-}" >&2; fi; }
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-RUNTIME_DIR="${XDG_RUNTIME_DIR}/firecracker"
+# Set a sensible default for XDG_RUNTIME_DIR if not set
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/var/run/user/$(id -u)}"
+EMBR_DIR="${HOME}/.config/embr"
+RUNTIME_DIR="${XDG_RUNTIME_DIR}/embr"
 
 # VM Configuration
 VM_CPUS="${VM_CPUS:-8}"
@@ -20,7 +22,7 @@ VM_MEMORY="${VM_MEMORY:-16}"
 VM_DISK="${VM_DISK:-20}"
 VM_HOSTNAME="${VM_HOSTNAME:-dev}"
 VM_SERIES="${VM_SERIES:-jammy}"
-VM_USERDATA="${SCRIPT_DIR}/userdata.yaml"
+VM_USERDATA="$(pwd)/userdata.yaml"
 
 # This is a JSON representation of a cloud-init file. This is a bit of a hack, and it's
 # later turned into yaml with the correct '#cloud-config' heading using 'yq'. It's done
@@ -88,8 +90,8 @@ cleanup() {
 		if pidof -q firecracker; then
 			sudo killall firecracker
 		fi
-	elif [[ -d "${SCRIPT_DIR}/vm" ]]; then
-		for d in "${SCRIPT_DIR}"/vm/*; do
+	elif [[ -d "${EMBR_DIR}/vm" ]]; then
+		for d in "${EMBR_DIR}"/vm/*; do
 			n="$(echo "$d" | rev | cut -d"/" -f1 | rev)"
 			pid_file="${RUNTIME_DIR}/${n}/firecracker.pid"
 			if [[ ! -f "$pid_file" ]]; then
@@ -110,10 +112,10 @@ cleanup() {
 	done
 
 	# Directories to delete
-	directories=("${SCRIPT_DIR}/vm" "${RUNTIME_DIR}")
+	directories=("${EMBR_DIR}/vm" "${RUNTIME_DIR}")
 
 	# If the PURGE variable is set, then delete downloaded images too
-	[[ -n "${PURGE:-}" ]] && directories+=("${SCRIPT_DIR}/images")
+	[[ -n "${PURGE:-}" ]] && directories+=("${EMBR_DIR}/images")
 
 	for d in "${directories[@]}"; do
 		if [[ -d "$d" ]]; then
@@ -125,7 +127,7 @@ cleanup() {
 
 check_dependencies() {
 	# Ensure we have all the dependenices we need to run this demo
-	deps=(firecracker yq jq dnsmasq openssl)
+	deps=(firecracker yq jq dnsmasq openssl ssh-keygen curl readelf truncate resize2fs killall)
 	for d in "${deps[@]}"; do
 		if ! command -v "$d" >/dev/null; then
 			_error "Could not find '$d' in \$PATH"
@@ -182,12 +184,20 @@ process_cloud_image_artefacts() {
 
 	# Extract the vmlinux from the kernel image
 	if [[ ! -f "${SERIES_KERNEL_FILE}" ]]; then
+		local extractor
 		_info "Extracting kernel image for series '${VM_SERIES}'"
-		tmpdir="$(mktemp -d)"
-		_debug "Downloading 'extract-vmlinux' script from Github"
-		url="https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux"
-		_download "$url" "${tmpdir}/extract-vmlinux"
-		bash "${tmpdir}/extract-vmlinux" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" >"${SERIES_KERNEL_FILE}"
+
+		if command -v extract-vmlinux &>/dev/null; then
+			extractor="extract-vmlinux"
+		else
+			tmpdir="$(mktemp -d)"
+			_debug "Downloading 'extract-vmlinux' script from Github"
+			url="https://raw.githubusercontent.com/torvalds/linux/master/scripts/extract-vmlinux"
+			_download "$url" "${tmpdir}/extract-vmlinux"
+			chmod +x "${tmpdir}/extract-vmlinux"
+			extractor="${tmpdir}/extract-vmlinux"
+		fi
+		bash "$extractor" "${DOWNLOAD_DIR}/${CI_KERNEL_FILE}" >"${SERIES_KERNEL_FILE}"
 		rm -rf "$tmpdir"
 	else
 		_debug "File '${SERIES_KERNEL_FILE}' already exists; skipping generation"
@@ -422,7 +432,8 @@ configure_vm() {
 	# Add the nocloud datasource for cloud-init to the kernel command line
 	cmdline="${cmdline} ds=nocloud-net;s=http://169.254.169.254/latest/"
 	# Add the network-config to the kernel command line (gzipped and base64 encoded)
-	cmdline="${cmdline} network-config=$(echo "$netconfig" | yq -P . | gzip -c - | base64 -w0)"
+	compressed_netconfig="$(echo "$netconfig" | yq . | gzip -c - | base64 -w0)"
+	cmdline="${cmdline} network-config=${compressed_netconfig}"
 
 	# Send the boot sources to the firecracker API
 	data="$(jq --arg c "$cmdline" '.boot_sources + {"boot_args": $c}' "$vconf")"
@@ -435,7 +446,7 @@ configure_vm() {
 		}
 	EOF
 
-	data="$(echo "$metadata" | yq -P . | jq --raw-input --slurp '{ "latest": { "meta-data": . }}')"
+	data="$(echo "$metadata" | yq . | jq --raw-input --slurp '{ "latest": { "meta-data": . }}')"
 	_firecracker_api_call PUT "mmds" "$data"
 
 	# If there is a provided userdata file, then use it; otherwise generate one
@@ -447,7 +458,7 @@ configure_vm() {
 		ssh-keygen -t ed25519 -q -N "" -C "stoked" -f "${VM_DIR}/id_ed25519"
 		# Update the userdata template with the new key
 		userdata="${USERDATA_TEMPLATE//__KEY__/$(cat "${VM_DIR}/id_ed25519.pub")}"
-		userdata="$(echo -e "#cloud-config\n$(echo "$userdata" | yq -P .)")"
+		userdata="$(echo -e "#cloud-config\n$(echo "$userdata" | yq .)")"
 		# Configure firecracker with the vendor data
 		data="$(jq --raw-input --slurp '{ "latest": { "user-data": . }}' <<<"$userdata")"
 		_firecracker_api_call PATCH "mmds" "$data"
@@ -491,10 +502,11 @@ start_vm() {
 
 main() {
 	# Directories for the operation of this script
-	SERIES_DIR="${SCRIPT_DIR}/images/${VM_SERIES}"
+	mkdir -p "$EMBR_DIR"
+	SERIES_DIR="${EMBR_DIR}/images/${VM_SERIES}"
 	DOWNLOAD_DIR="${SERIES_DIR}/downloads"
 	RUNTIME_VM_DIR="${RUNTIME_DIR}/${VM_HOSTNAME}"
-	VM_DIR="${SCRIPT_DIR}/vm/${VM_HOSTNAME}"
+	VM_DIR="${EMBR_DIR}/vm/${VM_HOSTNAME}"
 
 	# Filenames for cloud image artefacts
 	CI_ROOTFS_FILE="${VM_SERIES}-server-cloudimg-amd64-root.tar.xz"
