@@ -13,7 +13,6 @@
         pkgs = import nixpkgs {inherit system;};
 
         deps = with pkgs; [
-          bash
           curl
           dnsmasq
           e2fsprogs
