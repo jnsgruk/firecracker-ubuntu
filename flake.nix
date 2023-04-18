@@ -1,6 +1,10 @@
 {
   description = "embr - simple automation for booting Ubuntu microVMs with firecracker";
 
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+  };
+
   outputs =
     { self
     , nixpkgs
