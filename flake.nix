@@ -51,7 +51,7 @@
             killall
             openssh
             openssl
-            yq
+            yq-go
             # The following are dependencies of the extract-vmlinuz script
             binutils
             bzip2
