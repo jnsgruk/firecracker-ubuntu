@@ -3,30 +3,31 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    nix-formatter-pack.url = "github:Gerschtli/nix-formatter-pack";
+    nix-formatter-pack.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
     { self
     , nixpkgs
+    , nix-formatter-pack
     , ...
     }:
     let
       supportedSystems = [
         "x86_64-linux"
         # "aarch64-linux"
-        # "x86_64-darwin"
-        # "aarch64-darwin"
       ];
 
-      forAllSystems = f: nixpkgs.lib.genAttrs supportedSystems (system: f system);
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
       pkgsForSystem = system: (import nixpkgs {
         inherit system;
         overlays = [ self.overlay ];
       });
     in
-    rec {
-      overlay = final: prev: {
+    {
+      overlay = final: _prev: {
         embr-unwrapped = (final.writeScriptBin "embr" (builtins.readFile ./embr)).overrideAttrs (old: {
           buildCommand = "${old.buildCommand}\n patchShebangs $out";
         });
@@ -73,5 +74,16 @@
       });
 
       defaultPackage = forAllSystems (system: (pkgsForSystem system).embr);
+
+      formatter = forAllSystems (system:
+        nix-formatter-pack.lib.mkFormatter {
+          pkgs = nixpkgs.legacyPackages.${system};
+          config.tools = {
+            deadnix.enable = true;
+            nixpkgs-fmt.enable = true;
+            statix.enable = true;
+          };
+        }
+      );
     };
 }

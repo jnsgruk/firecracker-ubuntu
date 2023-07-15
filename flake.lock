@@ -1,23 +1,78 @@
 {
   "nodes": {
-    "nixpkgs": {
+    "nix-formatter-pack": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "nmd": "nmd",
+        "nmt": "nmt"
+      },
       "locked": {
-        "lastModified": 1681693905,
-        "narHash": "sha256-XdXMvCt+i2ZcmAIPZvu3RUwcdaC9OX7d1WMAJJokzeA=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "db34d7561caa508ece0265a56f382c5d3b7a6c1b",
+        "lastModified": 1689022371,
+        "narHash": "sha256-+jxvMYzmzKaGFh7VDgKBmdP1ZBaGhdzL5WZaspdKpTA=",
+        "owner": "Gerschtli",
+        "repo": "nix-formatter-pack",
+        "rev": "d974547b3d7c7ce2975dc120ef3bc53f9dd61127",
         "type": "github"
       },
       "original": {
-        "owner": "NixOS",
+        "owner": "Gerschtli",
+        "repo": "nix-formatter-pack",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1689413807,
+        "narHash": "sha256-exuzOvOhGAEKWQKwDuZAL4N8a1I837hH5eocaTcIbLc=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "46ed466081b9cad1125b11f11a2af5cc40b942c7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
         "ref": "nixpkgs-unstable",
         "repo": "nixpkgs",
         "type": "github"
       }
     },
+    "nmd": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1666190571,
+        "narHash": "sha256-Z1hc7M9X6L+H83o9vOprijpzhTfOBjd0KmUTnpHAVjA=",
+        "owner": "rycee",
+        "repo": "nmd",
+        "rev": "b75d312b4f33bd3294cd8ae5c2ca8c6da2afc169",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "rycee",
+        "repo": "nmd",
+        "type": "gitlab"
+      }
+    },
+    "nmt": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1648075362,
+        "narHash": "sha256-u36WgzoA84dMVsGXzml4wZ5ckGgfnvS0ryzo/3zn/Pc=",
+        "owner": "rycee",
+        "repo": "nmt",
+        "rev": "d83601002c99b78c89ea80e5e6ba21addcfe12ae",
+        "type": "gitlab"
+      },
+      "original": {
+        "owner": "rycee",
+        "repo": "nmt",
+        "type": "gitlab"
+      }
+    },
     "root": {
       "inputs": {
+        "nix-formatter-pack": "nix-formatter-pack",
         "nixpkgs": "nixpkgs"
       }
     }
